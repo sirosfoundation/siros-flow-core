@@ -49,6 +49,21 @@ fn err(error: Error) -> Response {
         .into_response()
 }
 
+/// The flow routes WITHOUT `/healthz` — for the embedded-issuer
+/// merge, where the issuer's own `/healthz` serves the composite
+/// origin (one app, one health).
+pub fn routes(state: Arc<FlowServiceState>) -> axum::Router {
+    axum::Router::new()
+        .route("/flows/{flow}/start", axum::routing::post(start))
+        .route(
+            "/flow-response/{handle}",
+            axum::routing::post(flow_response),
+        )
+        .route("/flows/{instance}", axum::routing::get(instance_status))
+        .with_state(state)
+}
+
+/// The standalone surface: the flow routes + `/healthz`.
 pub fn router(state: Arc<FlowServiceState>) -> axum::Router {
     axum::Router::new()
         .route("/healthz", axum::routing::get(healthz))

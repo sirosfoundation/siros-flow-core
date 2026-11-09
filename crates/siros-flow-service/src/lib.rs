@@ -17,10 +17,12 @@ pub use issuer_client::{IssuanceOutcome, IssuerClient, IssuerCoreClient};
 pub use state::FlowServiceState;
 pub use store::{ArmedStep, FlowRecord, FlowStore, MemoryFlowStore};
 
+pub mod app;
 pub mod config;
 pub mod driver;
 pub mod http;
 pub mod issuer_client;
+pub mod local_status;
 pub mod presentation;
 pub mod state;
 pub mod store;
