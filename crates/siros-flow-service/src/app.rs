@@ -436,9 +436,16 @@ async fn build_embedded_issuer(
     if let Some(key_path) = &flow_config.issuer.integrator_key_path {
         let text = std::fs::read_to_string(key_path)
             .map_err(|e| Error::configuration(format!("reading {key_path}: {e}")))?;
-        let public: jose_rs::jwk::Jwk = serde_json::from_str::<jose_rs::jwk::Jwk>(&text)
-            .map_err(|e| Error::configuration(format!("parsing {key_path}: {e}")))?
-            .to_public_jwk();
+        // The family's key shape accepted: PKCS#8 EC P-256 PEM (detected
+        // by the header) or JWK JSON — the same shapes the issuer client
+        // and the verifier signing loader take.
+        let jwk: jose_rs::jwk::Jwk = if text.trim_start().starts_with("-----BEGIN") {
+            load_pkcs8_pem(key_path)?
+        } else {
+            serde_json::from_str::<jose_rs::jwk::Jwk>(&text)
+                .map_err(|e| Error::configuration(format!("parsing {key_path}: {e}")))?
+        };
+        let public = jwk.to_public_jwk();
         let jwk_value = serde_json::to_value(&public)
             .map_err(|e| Error::configuration(format!("the integrator key: {e}")))?;
         clients

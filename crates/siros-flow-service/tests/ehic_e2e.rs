@@ -373,7 +373,7 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
     // 1. Start the flow (the definition does the rest).
     let start_response = client
         .post(format!("{flow_url}/flows/ehic-pid-presentation/start"))
-        .json(&json!({}))
+        .json(&json!({"coverage": {"pan": "n/a", "document_number": "n/a", "starting_date": "n/a", "ending_date": "n/a", "date_of_issuance": "n/a", "authentic_source": "n/a"}}))
         .send()
         .await
         .unwrap();
@@ -424,14 +424,14 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
         "exp": now + 100_000,
         "given_name": "Presented",
         "family_name": "Subject",
-        "birth_date": "1999-12-31",
+        "birthdate": "1999-12-31",
     }));
     spec.holder_pub = Some(testutil::public_of(&holder));
     spec.x5c_der = vec![pid_issuer_cert];
     spec.conceal = vec![
         vec![Seg::Key("given_name")],
         vec![Seg::Key("family_name")],
-        vec![Seg::Key("birth_date")],
+        vec![Seg::Key("birthdate")],
     ];
     let issued_pid = testutil::issue(&pid_issuer_key, &spec).unwrap();
     let presentation = testutil::present(
@@ -579,7 +579,7 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
     assert_eq!(verified.vct, "urn:eudi:ehic:1");
     assert_eq!(verified.claims["given_name"], "Presented");
     assert_eq!(verified.claims["family_name"], "Subject");
-    assert_eq!(verified.claims["birth_date"], "1999-12-31");
+    assert_eq!(verified.claims["birthdate"], "1999-12-31");
 
     // The flow instance is completed; a status read shows the
     // definition's digest (the PDP-evidence identity).

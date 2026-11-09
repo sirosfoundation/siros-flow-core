@@ -28,15 +28,30 @@ steps:
           # registry's PID generations, so a wallet holding any of the
           # deployed PID types satisfies the query.
           meta: { vct_values: ["urn:eudi:pid:arf-1.8:1", "urn:eudi:pid:arf-1.5:1", "urn:eudi:pid:1"] }
+          # The claims the EHIC subject derives from: the arf-1.8
+          # spelling (birthdate) — the registry's live PID shape.
           claims:
             - { path: [given_name] }
             - { path: [family_name] }
-            - { path: [birth_date] }
+            - { path: [birthdate] }
       require: [pid]
 
   - issuance:
       id: issue-ehic
       credential: "urn:eudi:ehic:1"
+      # The identity base is the PID's verified claims (issuing_country,
+      # issuing_authority, date_of_expiry — the arf PID and the DC4EU
+      # EHIC schemas share them); the EHIC-specific coverage fields
+      # (PAN, document number, validity window, authentic source) come
+      # from the flow INPUT `coverage` — the integrator's own record.
+      # The catalog's claim building filters to the EHIC schema's paths
+      # either way: extra PID keys never leak into the EHIC.
       subject:
         from: { step: present-pid, credential: pid, path: [] }
-        merge: {}
+        merge:
+          personal_administrative_number: { input: coverage, path: [pan] }
+          document_number: { input: coverage, path: [document_number] }
+          starting_date: { input: coverage, path: [starting_date] }
+          ending_date: { input: coverage, path: [ending_date] }
+          date_of_issuance: { input: coverage, path: [date_of_issuance] }
+          authentic_source: { input: coverage, path: [authentic_source] }

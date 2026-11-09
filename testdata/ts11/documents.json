@@ -224,7 +224,7 @@
         },
         {
           "path": [
-            "birth_date"
+            "birthdate"
           ],
           "mandatory": false
         }

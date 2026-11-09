@@ -1236,6 +1236,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2200,16 +2201,21 @@ dependencies = [
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tower",
  "tower-http",
  "tower-service",
@@ -2217,6 +2223,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2350,6 +2357,7 @@ checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -2858,7 +2866,7 @@ dependencies = [
 [[package]]
 name = "siros-issuer-core"
 version = "0.1.0"
-source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=9e367359ee5b585167fa6c3493fb0f41e04fc93c#9e367359ee5b585167fa6c3493fb0f41e04fc93c"
+source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=145eeef64cc425d54dd7905952adc454c86a8a44#145eeef64cc425d54dd7905952adc454c86a8a44"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2878,7 +2886,7 @@ dependencies = [
 [[package]]
 name = "siros-issuer-service"
 version = "0.1.0"
-source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=9e367359ee5b585167fa6c3493fb0f41e04fc93c#9e367359ee5b585167fa6c3493fb0f41e04fc93c"
+source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=145eeef64cc425d54dd7905952adc454c86a8a44#145eeef64cc425d54dd7905952adc454c86a8a44"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -3587,6 +3595,15 @@ name = "webpki-root-certs"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e49d0e65abc00c142e8f9428da991da9f1a250c39be97459901eb12b9b49f62a"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
 dependencies = [
  "rustls-pki-types",
 ]

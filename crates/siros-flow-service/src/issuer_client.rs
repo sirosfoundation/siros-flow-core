@@ -12,6 +12,34 @@ use serde_json::Value;
 use siros_flow_core::{Error, Result};
 use url::Url;
 
+/// Load a PKCS#8 EC P-256 PEM text into the JWK the signer wants (the
+/// family's key shape — detected by the PEM header).
+fn load_pkcs8_pem_key(text: &str, path: &str) -> Result<jose_rs::jwk::Jwk> {
+    let blocks: Vec<pem::Pem> =
+        pem::parse_many(text).map_err(|e| Error::configuration(format!("parsing {path}: {e}")))?;
+    let der = blocks
+        .iter()
+        .find(|block| block.tag() == "PRIVATE KEY")
+        .map(|block| block.contents().to_vec())
+        .ok_or_else(|| Error::configuration(format!("{path}: no PRIVATE KEY block")))?;
+    let secret: p256::SecretKey = p256::pkcs8::DecodePrivateKey::from_pkcs8_der(&der)
+        .map_err(|e| Error::configuration(format!("{path}: {e}")))?;
+    use p256::elliptic_curve::sec1::ToSec1Point as _;
+    let point = secret.public_key().to_sec1_point(false);
+    let bytes = point.as_bytes();
+    let scalar = secret.to_bytes();
+    serde_json::from_value(serde_json::json!({
+        "kty": "EC",
+        "crv": "P-256",
+        "x": siros_issuer_core::sdjwt_issue::b64u(&bytes[1..33]),
+        "y": siros_issuer_core::sdjwt_issue::b64u(&bytes[33..]),
+        "d": siros_issuer_core::sdjwt_issue::b64u(scalar.as_slice()),
+        "alg": "ES256",
+        "use": "sig",
+    }))
+    .map_err(|e| Error::configuration(format!("the loaded jwk: {e}")))
+}
+
 /// What one issuance step produced: the offer the wallet redeems.
 #[derive(Debug, Clone)]
 pub struct IssuanceOutcome {
@@ -66,8 +94,14 @@ impl IssuerCoreClient {
         let text = std::fs::read_to_string(key_path).map_err(|e| {
             Error::configuration(format!("reading the integrator key {key_path}: {e}"))
         })?;
-        let mut key: jose_rs::jwk::Jwk = serde_json::from_str(&text)
-            .map_err(|e| Error::configuration(format!("parsing the integrator key: {e}")))?;
+        // The family's key shape accepted: PKCS#8 EC P-256 PEM (detected
+        // by the header) or JWK JSON.
+        let mut key: jose_rs::jwk::Jwk = if text.trim_start().starts_with("-----BEGIN") {
+            load_pkcs8_pem_key(&text, key_path)?
+        } else {
+            serde_json::from_str(&text)
+                .map_err(|e| Error::configuration(format!("parsing the integrator key: {e}")))?
+        };
         if key.alg.is_none() {
             key.alg = Some("ES256".to_owned());
         }

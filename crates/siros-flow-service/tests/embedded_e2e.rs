@@ -209,7 +209,7 @@ allow_any_redirect_uri = false
     // The whole PID→EHIC journey, every hop on this one origin.
     let start: Value = client
         .post(format!("{base}/flows/ehic-pid-presentation/start"))
-        .json(&json!({}))
+        .json(&json!({"coverage": {"pan": "n/a", "document_number": "n/a", "starting_date": "n/a", "ending_date": "n/a", "date_of_issuance": "n/a", "authentic_source": "n/a"}}))
         .send()
         .await
         .unwrap()
@@ -263,14 +263,14 @@ allow_any_redirect_uri = false
         "exp": now + 100_000,
         "given_name": "Embedded",
         "family_name": "Flow",
-        "birth_date": "2000-01-01",
+        "birthdate": "2000-01-01",
     }));
     spec.holder_pub = Some(testutil::public_of(&holder));
     spec.x5c_der = vec![pid_issuer_cert];
     spec.conceal = vec![
         vec![Seg::Key("given_name")],
         vec![Seg::Key("family_name")],
-        vec![Seg::Key("birth_date")],
+        vec![Seg::Key("birthdate")],
     ];
     let issued_pid = testutil::issue(&pid_issuer_key, &spec).unwrap();
     let presentation = testutil::present(
@@ -524,7 +524,7 @@ allow_any_redirect_uri = false
     // The wallet redeems the EHIC offer (the local list backs it).
     let start_response = client
         .post(format!("{base}/flows/ehic-pid-presentation/start"))
-        .json(&serde_json::json!({}))
+        .json(&serde_json::json!({"coverage": {"pan": "n/a", "document_number": "n/a", "starting_date": "n/a", "ending_date": "n/a", "date_of_issuance": "n/a", "authentic_source": "n/a"}}))
         .send()
         .await
         .unwrap();
@@ -558,14 +558,14 @@ allow_any_redirect_uri = false
         "exp": now + 100_000,
         "given_name": "Local",
         "family_name": "List",
-        "birth_date": "2000-01-01",
+        "birthdate": "2000-01-01",
     }));
     spec.holder_pub = Some(siros_verifier_core::testutil::public_of(&holder));
     spec.x5c_der = vec![pid_cert];
     spec.conceal = vec![
         vec![siros_verifier_core::testutil::Seg::Key("given_name")],
         vec![siros_verifier_core::testutil::Seg::Key("family_name")],
-        vec![siros_verifier_core::testutil::Seg::Key("birth_date")],
+        vec![siros_verifier_core::testutil::Seg::Key("birthdate")],
     ];
     let issued_pid = siros_verifier_core::testutil::issue(&pid_issuer_key, &spec).unwrap();
     let presentation = siros_verifier_core::testutil::present(

@@ -20,14 +20,53 @@
 use serde_json::{json, Value};
 use url::Url;
 
+fn b64u(bytes: &[u8]) -> String {
+    siros_issuer_core::sdjwt_issue::b64u(bytes)
+}
+
 const DEFAULT_URL: &str = "https://sirosid-gdc-flow-core.fly.dev";
 
 /// The suite-shaped dev wallet client's private key (the conformance
 /// fixtures' published test key — LOCAL TEST ONLY).
 const DEV_WALLET_PRIVATE_JWK: &str = r#"{"kty":"EC","x":"MpY3glbcq9njtQLM1hCREOrfQqPgOKyGOl7xkMwHsSI","y":"ZDT-zr7lt2R12MaFbXuapq4eXS5hprKjegb5yq3UlXE","crv":"P-256","d":"gaknst5YK3n03zh8vvDXA4HydaNQfzYtnC0CiMHADmI","kid":"test-client-key-1","alg":"ES256","use":"sig"}"#;
 
+/// The deployment base WITHOUT a trailing slash (Url::parse normalizes a
+/// bare origin to "/" — format! would then build "//paths").
+/// Load a PKCS#8 EC P-256 PEM into a JWK (the test-side twin of the
+/// service's loader).
+fn load_pem_jwk(path: &str) -> jose_rs::jwk::Jwk {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
+    let blocks: Vec<pem::Pem> = pem::parse_many(&text).expect("pem");
+    let der = blocks
+        .iter()
+        .find(|block| block.tag() == "PRIVATE KEY")
+        .map(|block| block.contents().to_vec())
+        .unwrap_or_else(|| panic!("no PRIVATE KEY block in {path}"));
+    let secret: p256::SecretKey = p256::pkcs8::DecodePrivateKey::from_pkcs8_der(&der)
+        .unwrap_or_else(|e| panic!("key in {path}: {e}"));
+    use p256::elliptic_curve::sec1::ToSec1Point as _;
+    let point = secret.public_key().to_sec1_point(false);
+    let bytes = point.as_bytes();
+    let scalar = secret.to_bytes();
+    serde_json::from_value(serde_json::json!({
+        "kty": "EC", "crv": "P-256",
+        "x": b64u(&bytes[1..33]),
+        "y": b64u(&bytes[33..]),
+        "d": b64u(scalar.as_slice()),
+        "kid": "integrator", "alg": "ES256", "use": "sig",
+    }))
+    .unwrap()
+}
+
 fn base() -> Url {
-    Url::parse(&std::env::var("LIVE_GDC_URL").unwrap_or_else(|_| DEFAULT_URL.to_owned())).unwrap()
+    let raw = std::env::var("LIVE_GDC_URL").unwrap_or_else(|_| DEFAULT_URL.to_owned());
+    Url::parse(raw.trim_end_matches('/')).unwrap()
+}
+
+/// The base as a path-joinable string (Url Display keeps the root slash —
+/// format! would build "//paths").
+fn base_str(base: &Url) -> String {
+    base.as_str().trim_end_matches('/').to_owned()
 }
 
 fn now() -> i64 {
@@ -65,7 +104,7 @@ fn client_assertion(base: &Url) -> String {
         &json!({
             "iss": "suite-wallet",
             "sub": "suite-wallet",
-            "aud": base.as_str(),
+            "aud": base_str(base),
             "iat": now(),
             "exp": now() + 300,
         }),
@@ -120,7 +159,7 @@ async fn redeem_pre_authorized(
         .to_owned();
     let token = post_form(
         client,
-        format!("{base}/token"),
+        format!("{}/token", base_str(base)),
         &[
             (
                 "grant_type",
@@ -145,7 +184,7 @@ async fn redeem_pre_authorized(
         "openid4vci-proof+jwt",
         &json!({
             "iss": "wallet",
-            "aud": base.as_str(),
+            "aud": base_str(base),
             "nonce": c_nonce,
             "iat": now(),
         }),
@@ -153,7 +192,7 @@ async fn redeem_pre_authorized(
     );
     let credential = post_json(
         client,
-        format!("{base}/credential"),
+        format!("{}/credential", base_str(base)),
         Some(&access_token),
         json!({
             "credential_configuration_id": credential_id,
@@ -177,11 +216,23 @@ async fn the_live_gdc_round_trip() {
     let client = reqwest::Client::new();
 
     // ── 1. Start the flow ────────────────────────────────────────────────
+    // The coverage input: the integrator's own record (the EHIC-specific
+    // fields — PAN, document number, the validity window, the authentic
+    // source). The PID presentation derives the identity base.
     let start = post_json(
         &client,
-        format!("{base}/flows/ehic-pid-presentation/start"),
+        format!("{}/flows/ehic-pid-presentation/start", base_str(&base)),
         None,
-        json!({}),
+        json!({
+            "coverage": {
+                "pan": "18880307-9999",
+                "document_number": "EHIC-2026-0001",
+                "starting_date": "2026-01-01",
+                "ending_date": "2027-01-01",
+                "date_of_issuance": "2026-01-01",
+                "authentic_source": "SIROS"
+            }
+        }),
     )
     .await;
     let jar = start["authorization_request"]
@@ -212,15 +263,23 @@ async fn the_live_gdc_round_trip() {
     let pid_vct = "urn:eudi:pid:arf-1.8:1";
     let holder = ec_key();
 
-    // The backend session (the integrator surface — the dev wallet client
-    // is registered too; the assertion's aud is the issuer identifier).
+    // The backend session: the deployment's OWN identity — the URL gdc's
+    // PDP whitelists as a pid-issuer, presented with the embedded
+    // ISSUER's key (one deployment, one key: the PDP's entity-to-key
+    // binding, resolved from the issuer's own JWKS, matches). The test
+    // reads the rendered issuer-signing PEM locally.
+    let integrator_key_path = std::env::var("LIVE_GDC_INTEGRATOR_KEY").unwrap_or_else(|_| {
+        "/home/leifj/work/siros.org/sirosid-dev/fixtures/rendered/fly-gdc/vc-pki/flow_issuer_ec_private.pem"
+            .to_owned()
+    });
+    let integrator_key = load_pem_jwk(&integrator_key_path);
     let integrator_assertion = sign_jwt(
-        &serde_json::from_str::<jose_rs::jwk::Jwk>(DEV_WALLET_PRIVATE_JWK).unwrap(),
+        &integrator_key,
         "jwt",
         &json!({
-            "iss": "suite-wallet",
-            "sub": "suite-wallet",
-            "aud": base.as_str(),
+            "iss": base_str(&base),
+            "sub": base_str(&base),
+            "aud": base_str(&base),
             "iat": now(),
             "exp": now() + 300,
         }),
@@ -228,14 +287,22 @@ async fn the_live_gdc_round_trip() {
     );
     let create = post_json(
         &client,
-        format!("{base}/api/v1/issuance/sessions"),
-        Some(&format!("Bearer {integrator_assertion}")),
+        format!("{}/api/v1/issuance/sessions", base_str(&base)),
+        Some(&integrator_assertion),
+        // The registry's arf-1.8 PID schema gate: its mandatory claims
+        // (birthdate/place_of_birth/nationalities/... — the arf shape,
+        // birth_date's arf spelling) must all be present.
         json!({
             "credential": pid_vct,
             "subject": {
                 "given_name": "Live",
                 "family_name": "Roundtrip",
-                "birth_date": "1990-01-01"
+                "birthdate": "1990-01-01",
+                "place_of_birth": "Stockholm",
+                "nationalities": ["SE"],
+                "issuing_authority": "SIROS",
+                "issuing_country": "SE",
+                "date_of_expiry": "2030-01-01"
             },
             "ttl_seconds": 600,
         }),
@@ -243,8 +310,8 @@ async fn the_live_gdc_round_trip() {
     .await;
     let pid_offer_uri = create["offer_uri"]
         .as_str()
-        .expect("the offer uri")
-        .to_owned();
+        .map(str::to_owned)
+        .unwrap_or_else(|| panic!("the create reply: {create}"));
 
     let pid = redeem_pre_authorized(&client, &base, &pid_offer_uri, pid_vct, &holder).await;
     assert!(pid.contains('~'), "an SD-JWT with disclosures: {pid}");
@@ -323,8 +390,23 @@ async fn the_live_gdc_round_trip() {
     )
     .expect("the EHIC verifies");
     assert_eq!(verified.vct, "urn:eudi:ehic:1");
-    assert_eq!(verified.claims["given_name"], "Live");
-    assert_eq!(verified.claims["family_name"], "Roundtrip");
+    // The live registry EHIC's schema: the coverage fields from the flow
+    // input, the identity fields from the presented PID.
+    assert_eq!(
+        verified.claims["personal_administrative_number"], "18880307-9999",
+        "the EHIC's claims: {:?}",
+        verified.claims
+    );
+    assert_eq!(
+        verified.claims["document_number"], "EHIC-2026-0001",
+        "the EHIC's claims: {:?}",
+        verified.claims
+    );
+    assert_eq!(
+        verified.claims["issuing_country"], "SE",
+        "the EHIC's claims: {:?}",
+        verified.claims
+    );
 }
 
 /// Fetch the embedded issuer's public JWK from its own JWKS (the verifier
@@ -335,7 +417,7 @@ mod issuer_core {
         base: &url::Url,
     ) -> jose_rs::jwk::Jwk {
         let jwks: serde_json::Value = client
-            .get(format!("{base}/jwks"))
+            .get(format!("{}/jwks", base.as_str().trim_end_matches('/')))
             .send()
             .await
             .unwrap()
