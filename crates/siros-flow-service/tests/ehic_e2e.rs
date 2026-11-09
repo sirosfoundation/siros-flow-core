@@ -395,10 +395,12 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
         &siros_issuer_core::sdjwt_issue::b64u_decode(jar.split('.').nth(1).unwrap()).unwrap(),
     )
     .unwrap();
-    assert_eq!(
-        jar_payload["dcql_query"]["credentials"][0]["meta"]["vct_values"][0],
-        "urn:eudi:pid:1"
-    );
+    // vct_values matches ANY listed type (the registry's PID
+    // generations + the classic v1) — the fixture lists them.
+    let vct_values = jar_payload["dcql_query"]["credentials"][0]["meta"]["vct_values"]
+        .as_array()
+        .expect("the PID query lists its vct_values");
+    assert!(vct_values.iter().any(|v| v == "urn:eudi:pid:arf-1.8:1"));
     let oid4vp_nonce = jar_payload["nonce"].as_str().unwrap().to_owned();
     let oid4vp_state = jar_payload["state"].as_str().unwrap().to_owned();
     let oid4vp_client_id = jar_payload["client_id"].as_str().unwrap().to_owned();

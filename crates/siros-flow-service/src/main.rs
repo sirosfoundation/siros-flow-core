@@ -47,7 +47,7 @@ async fn run(config: Config) -> Result<()> {
         .clone()
         .unwrap_or_else(|| "0.0.0.0:8080".to_owned());
     let retention = config.retention_after_final_seconds;
-    let app = siros_flow_service::app::build(&config)?;
+    let app = siros_flow_service::app::build(&config).await?;
 
     // The retention sweep (§10): expire past-TTL instances, purge
     // sealed data past retention, on an interval.

@@ -60,6 +60,10 @@ pub struct SigningCfg {
     /// Absent ⇒ an ephemeral dev key (restarts rotate it; development
     /// only — the same warning the issuer gives).
     pub jwk_path: Option<String>,
+    /// The family's key shape instead: a PKCS#8 EC P-256 PEM
+    /// (fixtures/vc-pki/verifier-style, created by create-pki.sh) —
+    /// loaded into the same JWK. Exactly one of jwk_path / pem_path.
+    pub pem_path: Option<String>,
     /// The verifier role's certificate chain (PEM, leaf first): the
     /// request object's x5c. The wallet/PDP trust the request-signing
     /// leaf by this chain — the additional-trusted-verifier identity.

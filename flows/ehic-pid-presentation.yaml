@@ -24,7 +24,10 @@ steps:
       request:
         - id: pid
           format: dc+sd-jwt
-          meta: { vct_values: ["urn:eudi:pid:1"] }
+          # vct_values matches ANY listed type (DCQL §5.2) — the
+          # registry's PID generations, so a wallet holding any of the
+          # deployed PID types satisfies the query.
+          meta: { vct_values: ["urn:eudi:pid:arf-1.8:1", "urn:eudi:pid:arf-1.5:1", "urn:eudi:pid:1"] }
           claims:
             - { path: [given_name] }
             - { path: [family_name] }

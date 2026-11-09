@@ -59,7 +59,7 @@ pub struct App {
     pub embedded_issuer: Option<String>,
 }
 
-pub fn build(config: &Config) -> Result<App> {
+pub async fn build(config: &Config) -> Result<App> {
     // The definitions: every one loads and validates, or startup
     // refuses (fail-closed — a deployment's flow set is reviewed).
     let definitions_dir = config
@@ -116,7 +116,7 @@ pub fn build(config: &Config) -> Result<App> {
             ));
         }
         let (router, issuer_state, local_list) =
-            build_embedded_issuer(&embedded.issuer, &pdp, config, &status_mode)?;
+            build_embedded_issuer(&embedded.issuer, &pdp, config, &status_mode).await?;
         // The local status list serves on the merged router (the
         // wallet's GET /lists/{id}).
         let mut merged = router;
@@ -203,6 +203,45 @@ pub fn build(config: &Config) -> Result<App> {
 
 type VerifierSigning = (Arc<dyn siros_issuer_core::signer::Signer>, Vec<Vec<u8>>);
 
+/// Load a PKCS#8 EC P-256 PEM into the JWK the signer wants (the
+/// family's key shape — create-pki.sh's verifier-style private key).
+fn load_pkcs8_pem(path: &str) -> Result<jose_rs::jwk::Jwk> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| Error::configuration(format!("reading {path}: {e}")))?;
+    let blocks: Vec<pem::Pem> =
+        pem::parse_many(&text).map_err(|e| Error::configuration(format!("parsing {path}: {e}")))?;
+    let der = blocks
+        .iter()
+        .find(|block| block.tag() == "PRIVATE KEY")
+        .map(|block| block.contents().to_vec())
+        .ok_or_else(|| Error::configuration(format!("{path}: no PRIVATE KEY block")))?;
+    let secret: p256::SecretKey = p256::pkcs8::DecodePrivateKey::from_pkcs8_der(&der)
+        .map_err(|e| Error::configuration(format!("{path}: {e}")))?;
+    let public = secret.public_key();
+    use p256::elliptic_curve::sec1::ToSec1Point as _;
+    let point = public.to_sec1_point(false);
+    let bytes = point.as_bytes();
+    let scalar = secret.to_bytes();
+    let jwk: jose_rs::jwk::Jwk = serde_json::from_value(serde_json::json!({
+        "kty": "EC",
+        "crv": "P-256",
+        "x": siros_issuer_core::sdjwt_issue::b64u(&bytes[1..33]),
+        "y": siros_issuer_core::sdjwt_issue::b64u(&bytes[33..]),
+        "d": siros_issuer_core::sdjwt_issue::b64u(scalar.as_slice()),
+        "alg": "ES256",
+        "use": "sig",
+    }))
+    .map_err(|e| Error::configuration(format!("the loaded jwk: {e}")))?;
+    let mut jwk = jwk;
+    if jwk.kid.is_none() {
+        jwk.kid = Some(
+            siros_issuer_service::auth::thumbprint(&jwk)
+                .map_err(|e| Error::configuration(e.to_string()))?,
+        );
+    }
+    Ok(jwk)
+}
+
 /// A PEM certificate chain (leaf first) → DER vectors.
 fn pem_chain_to_der(path: &str) -> Result<Vec<Vec<u8>>> {
     let pem = std::fs::read_to_string(path)
@@ -220,8 +259,11 @@ fn pem_chain_to_der(path: &str) -> Result<Vec<Vec<u8>>> {
 /// The verifier role's signing material: the request-object JWK and
 /// the x5c chain.
 fn verifier_signing(config: &Config) -> Result<VerifierSigning> {
-    let signer: Arc<dyn siros_issuer_core::signer::Signer> = match &config.signing.jwk_path {
-        Some(path) => {
+    let signer: Arc<dyn siros_issuer_core::signer::Signer> = match (
+        &config.signing.jwk_path,
+        &config.signing.pem_path,
+    ) {
+        (Some(path), None) => {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| Error::configuration(format!("reading {path}: {e}")))?;
             let mut jwk: jose_rs::jwk::Jwk = serde_json::from_str(&text)
@@ -240,9 +282,23 @@ fn verifier_signing(config: &Config) -> Result<VerifierSigning> {
                     .map_err(|e| Error::configuration(e.to_string()))?,
             )
         }
-        None => {
+        (None, Some(path)) => {
+            // The family's PKCS#8 EC P-256 PEM (create-pki.sh's shape)
+            // — loaded into the same JWK.
+            let jwk = load_pkcs8_pem(path)?;
+            Arc::new(
+                siros_issuer_core::signer::JwkSigner::new(jwk)
+                    .map_err(|e| Error::configuration(e.to_string()))?,
+            )
+        }
+        (Some(_), Some(_)) => {
+            return Err(Error::configuration(
+                "signing: exactly one of jwk_path and pem_path",
+            ));
+        }
+        (None, None) => {
             eprintln!(
-                "siros-flow-service: no signing.jwk_path configured: an ephemeral dev key signs request objects; development only"
+                "siros-flow-service: no signing key configured: an ephemeral dev key signs request objects; development only"
             );
             let jwk = jose_rs::jwk::generate_ec("P-256")
                 .map_err(|e| Error::configuration(format!("keygen: {e}")))?;
@@ -270,7 +326,7 @@ type EmbeddedIssuer = (
     Option<std::sync::Arc<crate::local_status::LocalStatusList>>,
 );
 
-fn build_embedded_issuer(
+async fn build_embedded_issuer(
     config: &siros_issuer_service::config::Config,
     pdp: &Arc<dyn siros_issuer_service::pdp::TrustPdp>,
     flow_config: &Config,
@@ -278,21 +334,29 @@ fn build_embedded_issuer(
 ) -> Result<EmbeddedIssuer> {
     let catalog_source = siros_issuer_service::fetch::CatalogSource::from_config(&config.catalog)
         .map_err(|e| Error::configuration(e.to_string()))?;
-    let catalog = futures_util::FutureExt::now_or_never(async {
-        siros_issuer_service::fetch::load_catalog(&catalog_source).await
-    })
-    .transpose()
-    .map_err(|e| Error::configuration(e.to_string()))?
-    .ok_or_else(|| Error::configuration("the embedded issuer's catalog load returned nothing"))?;
+    // Await the catalog (a network load when mirrors are configured —
+    // the registry; fail-closed on any refusal, the circuit-catalog
+    // discipline). Metadata generation SKIPS types this deployment
+    // cannot issue (issuer-core 467d073: the metadata advertises what
+    // it issues; a skipped type still fails closed at resolve).
+    let catalog = siros_issuer_service::fetch::load_catalog(&catalog_source)
+        .await
+        .map_err(|e| Error::configuration(e.to_string()))?;
 
     // The issuer's credential-signing key (its own identity — NOT the
-    // verifier role's key, the siros-verifier rule).
+    // verifier role's key, the siros-verifier rule). The file may be
+    // the family's PKCS#8 PEM (create-pki.sh's shape) or JWK JSON —
+    // detected by the PEM header.
     let mut jwk = match &config.signing.jwk_path {
         Some(path) => {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| Error::configuration(format!("reading {}: {e}", path.display())))?;
-            serde_json::from_str::<jose_rs::jwk::Jwk>(&text)
-                .map_err(|e| Error::configuration(format!("parsing {}: {e}", path.display())))?
+            if text.trim_start().starts_with("-----BEGIN") {
+                load_pkcs8_pem(&path.display().to_string())?
+            } else {
+                serde_json::from_str::<jose_rs::jwk::Jwk>(&text)
+                    .map_err(|e| Error::configuration(format!("parsing {}: {e}", path.display())))?
+            }
         }
         None => {
             eprintln!(

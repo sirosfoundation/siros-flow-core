@@ -65,7 +65,12 @@ fn the_early_ehic_flow_is_the_mode_b_shape() {
     match &definition.steps[0] {
         Step::Presentation(p) => {
             assert_eq!(p.id, "present-pid");
-            assert_eq!(p.request[0].meta["vct_values"][0], "urn:eudi:pid:1");
+            // vct_values matches ANY listed type (DCQL §5.2) — the
+            // registry's PID generations; the fixture lists them.
+            let vct_values = p.request[0].meta["vct_values"]
+                .as_array()
+                .expect("the PID query lists its vct_values");
+            assert!(vct_values.len() >= 2, "the fixture lists the generations");
         }
         other => panic!("the first step is a presentation, got {other:?}"),
     }

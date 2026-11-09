@@ -180,7 +180,7 @@ allow_any_redirect_uri = false
     ))
     .unwrap();
 
-    let app = build(&config).unwrap();
+    let app = build(&config).await.unwrap();
     assert_eq!(app.embedded_issuer.as_deref(), Some(base.as_str()));
     tokio::spawn(async move {
         axum::serve(listener, app.router).await.unwrap();
@@ -514,7 +514,7 @@ allow_any_redirect_uri = false
     ))
     .unwrap();
 
-    let app = build(&config).unwrap();
+    let app = build(&config).await.unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app.router).await.unwrap();
     });
