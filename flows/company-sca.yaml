@@ -1,0 +1,66 @@
+# The company-bound SCA (design §2.1 flow 1, §5.1) — the P-bw2
+# target, drafted now as the vocabulary's acceptance test. Runs with
+# the names-comparison plugin, labelled as probabilistic identity
+# evidence (§14 Q11 resolved): the WE BUILD PoA identifies its
+# attorney by attorney_full_name only. When the PoA rulebook carries
+# the representative's PID id or RP-scoped pseudonym (the ADR 002
+# ask, tracked as a WE BUILD rulebook change), pseudonym-equals
+# replaces the names rule in the INPUT and the engine does not change.
+
+flow: company-sca
+language_version: 1
+description: >
+  Present a PID and a PoA in one transaction; bind the PoA's
+  attorney to the PID's subject via the caller's rule; issue a
+  company-bound SCA over the PID's claims merged with the company
+  from the PoA.
+
+steps:
+  - presentation:
+      id: pid-and-poa
+      request:
+        - id: pid
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:eudi:pid:1"] }
+          claims:
+            - { path: [id] }
+            - { path: [given_name] }
+            - { path: [family_name] }
+        - id: poa
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:ewb:poa:1"] }
+          claims:
+            - { path: [attorney_full_name] }
+            - { path: [company_statutory_full_name] }
+      require: [pid, poa]
+
+  - bind:
+      id: poa-attorney-is-pid-subject
+      # rule-match: the caller's rule names the PoA's attorney and the
+      # PID's subject attributes — the names comparison, labelled
+      # probabilistic (§8.2). P-bw2 swaps in pseudonym-equals when the
+      # rulebook carries the representative's pseudonym.
+      primitive: rule-match
+      params:
+        against: { step: pid-and-poa, credential: poa, path: [] }
+        rule_from: { input: identity_match }
+      on_mismatch: fail
+
+  - bind:
+      # The PID satisfies the session's own identity binding (flow 1's
+      # shape inside the larger flow — §5.2: steps interleave).
+      id: pid-is-session-user
+      primitive: rule-match
+      params:
+        against: { step: pid-and-poa, credential: pid, path: [] }
+        rule_from: { input: identity_match }
+      on_mismatch: fail
+
+  - issuance:
+      id: issue-sca
+      credential: "urn:ewb:sca:1"
+      subject:
+        from: { step: pid-and-poa, credential: pid, path: [] }
+        merge:
+          company:
+            { step: pid-and-poa, credential: poa, path: [company_statutory_full_name] }

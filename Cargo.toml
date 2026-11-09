@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/siros-flow-core", "crates/siros-flow-service"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/sirosfoundation/siros-flow-core"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = { version = "0.11", default-features = false }
+jose-rs = { version = "0.10", default-features = false }
+thiserror = "2"
+siros-issuer-core = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "a166612f7ef758db9f29b1237ad80e381767549b" }
+
+[profile.release]
+lto = true

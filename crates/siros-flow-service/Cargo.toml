@@ -1,0 +1,14 @@
+[package]
+name = "siros-flow-service"
+description = "The deployable flow service: the FlowStore (clear/sealed record split), the primitive implementations over the cores, the carriers, and the HTTP surface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+siros-flow-core = { path = "../siros-flow-core" }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

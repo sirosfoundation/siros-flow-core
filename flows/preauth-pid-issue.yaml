@@ -1,0 +1,44 @@
+# Flow #1 — the pre-auth PID→bind→issue flow (design §8.5): the
+# issuer-core §6.5 strong binding, expressed as a definition.
+#
+# P-bw1's parity target: this definition, run by the engine, does
+# what issuer-core's hard-coded [authorization.pre_auth_binding] gate
+# does today — present a PID, bind it to the session's identity via
+# the caller's rule, then issue. The rule arrives as a FLOW INPUT
+# (rule-match's semantics: only the initiating caller knows what "the
+# same user" means for its session — never the definition).
+
+flow: preauth-pid-issue
+language_version: 1
+description: >
+  Present a PID, bind it to the identity the session knows via the
+  caller's rule (rule-match reference plugin — exact as a comparison,
+  probabilistic as identity evidence when the rule names attributes),
+  then issue the credential over the session's own subject data.
+
+steps:
+  - presentation:
+      id: present-pid
+      request:
+        - id: pid
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:eudi:pid:1"] }
+          claims:
+            - { path: [given_name] }
+            - { path: [family_name] }
+      require: [pid]
+
+  - bind:
+      id: pid-is-session-user
+      primitive: rule-match
+      params:
+        against: { step: present-pid, credential: pid, path: [] }
+        rule_from: { input: identity_match }
+      on_mismatch: fail
+
+  - issuance:
+      id: issue-credential
+      credential: "urn:eudi:pid:1"
+      subject:
+        from: { input: subject, path: [] }
+        merge: {}

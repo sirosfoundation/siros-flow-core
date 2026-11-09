@@ -1,0 +1,39 @@
+# EHIC issuance bound to a PID presentation (design §8.5, the early
+# simple flow): present a PID, issue the EHIC with the subject derived
+# from the PID's verified claims.
+#
+# This is the shape siros-issuer-core hard-codes as Mode B today
+# (§7.3: present → verified claims become the session subject → issue)
+# — expressed here as a definition. The migration question (§14 Q12):
+# issuer-core's hard-coded Mode B and §6.5 binding are transitional;
+# once flow-core deployments front them, the hard-coded paths retire
+# behind their own config gates.
+
+flow: ehic-pid-presentation
+language_version: 1
+description: >
+  Present a PID; issue the European Health Insurance Card with the
+  subject derived from the PID's verified claims. No bind step: the
+  presentation IS the subject source (Mode B semantics), and the
+  presented credential's trust is the PDP's call at the engine
+  boundary, not a step.
+
+steps:
+  - presentation:
+      id: present-pid
+      request:
+        - id: pid
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:eudi:pid:1"] }
+          claims:
+            - { path: [given_name] }
+            - { path: [family_name] }
+            - { path: [birth_date] }
+      require: [pid]
+
+  - issuance:
+      id: issue-ehic
+      credential: "urn:eudi:ehic:1"
+      subject:
+        from: { step: present-pid, credential: pid, path: [] }
+        merge: {}

@@ -1,0 +1,16 @@
+[package]
+name = "siros-flow-core"
+description = "The sans-I/O flow core: the flow language (parse + validate + digest), the flow state machine, and the bind vocabulary — authentication/verification/issuance flows as data over primitives"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+jose-rs = { workspace = true }
+thiserror = { workspace = true }
+siros-issuer-core = { workspace = true }
