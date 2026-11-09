@@ -1,6 +1,6 @@
 [package]
 name = "siros-flow-service"
-description = "The deployable flow service: the FlowStore (clear/sealed record split), the primitive implementations over the cores, the carriers, and the HTTP surface"
+description = "The deployable flow service: the FlowStore, the primitive implementations over the cores (presentation via verifier-core, issuance via the issuer backend API), the carriers, and the HTTP surface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,30 @@ repository.workspace = true
 
 [dependencies]
 siros-flow-core = { path = "../siros-flow-core" }
-async-trait = "0.1"
+siros-issuer-core = { workspace = true }
+siros-issuer-service = { workspace = true }
+siros-verifier-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+jose-rs = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+form_urlencoded = "1"
+kryptering = { workspace = true }
+p256 = { workspace = true }
+getrandom = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
+siros-verifier-core = { workspace = true, features = ["testutil"] }
+futures-util = "0.3"
+rcgen = { workspace = true }
+rustls-pki-types = { workspace = true }
+urlencoding = { workspace = true }

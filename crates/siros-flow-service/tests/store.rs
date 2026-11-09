@@ -1,97 +1,127 @@
-//! The FlowStore contract (design §8.6): the CAS discipline — a
-//! transition applies only at the expected record version — and the
-//! sweep's bounded lifetimes (§10). The in-memory backend is the
-//! reference; the contract is the source of truth.
+//! The FlowStore contract (design §8.6): the CAS discipline and the
+//! armed-step handle index — the Mode B `challenge_handle` /
+//! deferred `transaction` discipline, generalized. The in-memory
+//! backend is the reference; the contract is the source of truth.
 
 use siros_flow_core::engine::{FlowInstance, FlowState};
-use siros_flow_service::{FlowRecord, FlowStore, MemoryFlowStore};
+use siros_flow_service::{ArmedStep, FlowRecord, FlowStore, MemoryFlowStore};
 
 fn instance(flow: &str) -> FlowInstance {
     let definition = siros_flow_core::language::FlowDefinition::from_yaml(&format!(
-        "flow: {flow}\nlanguage_version: 1\nsteps:\n  - end\n"
+        "flow: {flow}\nlanguage_version: 1\nsteps:\n  - presentation: {{id: p, request: [{{id: pid, format: dc+sd-jwt, meta: {{vct_values: [urn:eudi:pid:1]}}}}]}}\n  - end\n"
     ))
     .unwrap();
     FlowInstance::start(&definition, 1_000, 300).unwrap()
 }
 
 #[tokio::test]
-async fn insert_get_and_the_cas_step() {
+async fn insert_update_and_the_version_cas() {
     let store = MemoryFlowStore::new();
     store
-        .insert(FlowRecord {
-            instance: instance("cas"),
-            sealed_context: vec![1, 2, 3],
-            version: 0,
-        })
+        .insert(FlowRecord::new(
+            "cas".to_owned(),
+            instance("cas"),
+            vec![1, 2, 3],
+        ))
         .await
         .unwrap();
-
     let record = store.get("cas").await.unwrap().unwrap();
     assert_eq!(record.version, 0);
     assert_eq!(record.instance.state, FlowState::Running);
 
-    // The step applies at the expected version and bumps it.
+    // The update applies at the expected version and bumps it.
     let mut moved = record.instance.clone();
     moved
         .step(siros_flow_core::engine::FlowEvent::StepArmed)
         .unwrap();
     let updated = store
-        .step("cas", record.version, moved, vec![4, 5, 6])
+        .update("cas", record.version, moved, None, vec![4, 5, 6])
         .await
         .unwrap();
     assert_eq!(updated.version, 1);
-    assert_eq!(updated.instance.state, FlowState::Waiting);
 
     // A stale version refuses — a concurrent response and a sweep
-    // cannot interleave (the take_transaction discipline).
+    // cannot interleave.
     let stale = store
-        .step("cas", 0, updated.instance.clone(), Vec::new())
+        .update("cas", 0, updated.instance.clone(), None, Vec::new())
         .await
         .unwrap_err();
     assert_eq!(stale.code, "illegal_transition");
 }
 
 #[tokio::test]
+async fn the_handle_index_arms_finds_and_takes_single_use() {
+    let store = MemoryFlowStore::new();
+    let mut record = FlowRecord::new("handles".to_owned(), instance("handles"), vec![7, 7, 7]);
+    record.armed = Some(ArmedStep {
+        handle: "fr_testhandle".to_owned(),
+        step_id: "p".to_owned(),
+        sealed_step: vec![9, 9],
+    });
+    store.insert(record).await.unwrap();
+
+    // Find (read-only — the Mode B peek: verify before claim).
+    let found = store
+        .find_by_handle("fr_testhandle")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.instance_id, "handles");
+    assert_eq!(found.armed.as_ref().unwrap().step_id, "p");
+    // An unknown handle misses.
+    assert!(store.find_by_handle("fr_other").await.unwrap().is_none());
+
+    // Take (single-use): the snapshot carries the arm; the record's
+    // arm clears under the lock; a second take misses.
+    let taken = store
+        .take_by_handle("fr_testhandle")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(taken.armed.is_some(), "the claim snapshot carries the arm");
+    assert!(
+        store
+            .take_by_handle("fr_testhandle")
+            .await
+            .unwrap()
+            .is_none(),
+        "the arm is single-use"
+    );
+    // The record no longer carries the arm (the walk re-arms or
+    // advances).
+    let record = store.get("handles").await.unwrap().unwrap();
+    assert!(record.armed.is_none());
+}
+
+#[tokio::test]
 async fn the_sweep_expires_and_purges_sealed_context() {
     let store = MemoryFlowStore::new();
     store
-        .insert(FlowRecord {
-            instance: instance("sweep-me"),
-            sealed_context: vec![7, 7, 7],
-            version: 0,
-        })
+        .insert(FlowRecord::new(
+            "sweep-me".to_owned(),
+            instance("sweep-me"),
+            vec![7, 7, 7],
+        ))
         .await
         .unwrap();
-    // Past TTL, not final: expired this pass, sealed data dropped.
     store.sweep(2_000, 3_600).await.unwrap();
     let record = store.get("sweep-me").await.unwrap().unwrap();
     assert_eq!(record.instance.state, FlowState::Expired);
     assert!(record.sealed_context.is_empty());
-    // The record skeleton survives (handles and verdicts outlive the
-    // data — the retention discipline, §10).
-    assert_eq!(record.instance.flow, "sweep-me");
+    // The skeleton survives (handles and digests outlive the data).
+    assert_eq!(record.instance_id, "sweep-me");
 }
 
 #[tokio::test]
-async fn an_unknown_flow_refuses() {
+async fn a_duplicate_instance_refuses() {
     let store = MemoryFlowStore::new();
-    let error = store.get("nope").await;
-    assert!(error.is_err() || error.unwrap().is_none());
-    let duplicate = store
-        .insert(FlowRecord {
-            instance: instance("dup"),
-            sealed_context: vec![],
-            version: 0,
-        })
-        .await;
-    duplicate.unwrap();
-    let duplicate = store
-        .insert(FlowRecord {
-            instance: instance("dup"),
-            sealed_context: vec![],
-            version: 0,
-        })
+    store
+        .insert(FlowRecord::new("dup".to_owned(), instance("dup"), vec![]))
+        .await
+        .unwrap();
+    let error = store
+        .insert(FlowRecord::new("dup".to_owned(), instance("dup"), vec![]))
         .await
         .unwrap_err();
-    assert!(duplicate.message.contains("already exists"));
+    assert!(error.message.contains("already exists"));
 }

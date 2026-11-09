@@ -1,0 +1,46 @@
+# §2.1 flow 2 — the identity-bound EUCC: an identity-bound session
+# (the business wallet knows who its user is), a PID presentation,
+# and an EUCC issued ONLY IF the PID's identity is the identity the
+# session knows. Drafted as the P-bw1 vocabulary's evidence
+# (Appendix A): every construct here must parse, validate, and be
+# walkable by the driver as-is.
+
+flow: identity-bound-eucc
+language_version: 1
+description: >
+  Present a PID; bind it to the identity the session knows via the
+  caller's rule (the rule is a flow input — only the initiating
+  caller knows what "the same user" means for its session); issue an
+  EUCC over the session's own subject data. The bind is the gate:
+  on mismatch the flow fails closed.
+
+steps:
+  - presentation:
+      id: present-pid
+      request:
+        - id: pid
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:eudi:pid:1"] }
+          claims:
+            - { path: [id] }
+            - { path: [given_name] }
+            - { path: [family_name] }
+      require: [pid]
+
+  - bind:
+      id: pid-is-session-user
+      primitive: rule-match
+      params:
+        against: { step: present-pid, credential: pid, path: [] }
+        rule_from: { input: identity_match }
+      on_mismatch: fail
+
+  - issuance:
+      id: issue-eucc
+      credential: "urn:ewb:eucc:1"
+      subject:
+        # The EUCC's subject is the SESSION's own data (the caller
+        # authenticated the user): the presentation is the gate, not
+        # the source.
+        from: { input: subject, path: [] }
+        merge: {}

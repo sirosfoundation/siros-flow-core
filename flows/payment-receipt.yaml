@@ -1,0 +1,41 @@
+# §2.1 flow 3 — the payment receipt: a business instance presents a
+# PoA and an SCA (direct payment), and the flow issues a Payment
+# Receipt attestation over the payment facts. Drafted as the P-bw1
+# vocabulary's evidence (Appendix A): flow 3 is the flow most likely
+# to expose the missing holder role (§7, Q10) — the presenting side
+# here is a WMP instance, which P-bw4 carries.
+
+flow: payment-receipt
+language_version: 1
+description: >
+  Present a PoA and an SCA in one transaction (direct payment
+  authorization); issue a Payment Receipt attestation over the
+  payment facts (a flow input — the payment system's own record)
+  merged with the company from the PoA.
+
+steps:
+  - presentation:
+      id: poa-and-sca
+      request:
+        - id: poa
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:ewb:poa:1"] }
+          claims:
+            - { path: [company_statutory_full_name] }
+        - id: sca
+          format: dc+sd-jwt
+          meta: { vct_values: ["urn:ewb:sca:1"] }
+          claims:
+            - { path: [id] }
+      require: [poa, sca]
+
+  - issuance:
+      id: issue-receipt
+      credential: "urn:ewb:payment-receipt:1"
+      subject:
+        # The payment facts are the payment system's own record (a
+        # flow input); the company name on the receipt is the PoA's.
+        from: { input: payment, path: [] }
+        merge:
+          company:
+            { step: poa-and-sca, credential: poa, path: [company_statutory_full_name] }

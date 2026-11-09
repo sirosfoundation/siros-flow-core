@@ -14,8 +14,23 @@ serde_json = "1"
 serde_yaml = "0.9"
 sha2 = { version = "0.11", default-features = false }
 jose-rs = { version = "0.10", default-features = false }
+kryptering = "0.7"
+p256 = { version = "0.14", features = ["ecdsa"] }
+getrandom = "0.3"
+rcgen = "0.14"
+rustls-pki-types = "1"
+urlencoding = "2"
 thiserror = "2"
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "signal", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+url = "2"
+toml = "0.8"
+tracing = "0.1"
 siros-issuer-core = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "a166612f7ef758db9f29b1237ad80e381767549b" }
+siros-issuer-service = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "a166612f7ef758db9f29b1237ad80e381767549b" }
+siros-verifier-core = { git = "https://github.com/sirosfoundation/siros-verifier-core", rev = "fa7f491beeae1d25f7291fee526462d343dcde5c" }
 
 [profile.release]
 lto = true

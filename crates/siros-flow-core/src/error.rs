@@ -38,6 +38,9 @@ pub mod code {
     /// accepts and the engine has not grown — e.g. `map:`), stated at
     /// load, never a silent no-op.
     pub const NOT_IMPLEMENTED: &str = "not_implemented";
+    /// A backend the primitives drive (the issuer, the PDP transport)
+    /// is unreachable or answered badly — fail-closed 503 shape.
+    pub const TRANSPORT: &str = "transport";
     pub const INVALID_INPUT: &str = "invalid_input";
     pub const CONFIGURATION: &str = "configuration";
 }

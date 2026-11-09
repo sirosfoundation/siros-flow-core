@@ -1,0 +1,48 @@
+# siros-flow-service configuration (TOML — the family convention:
+# deployment settings never leak into the core).
+#
+# The service is GENERAL: every definition in the configured
+# directory is loaded, validated, and exposed
+# (POST /flows/{flow}/start). No flow is hard-coded.
+
+[service]
+# host:port to bind.
+bind = "0.0.0.0:8080"
+# The externally visible base URL — the OID4VP response_uri and the
+# status URLs derive from it (the one-URL rule: it must resolve from
+# the wallet AND from inside the deployment).
+public_url = "http://127.0.0.1:8080"
+
+[definitions]
+# The reviewed flow definitions directory: every .yaml loads and
+# validates at startup, or startup refuses (fail-closed). The image
+# ships the repo's flows/ set at /etc/siros-flow/flows.
+dir = "flows"
+
+[signing]
+# The key that signs OID4VP request objects (the verifier role).
+# Absent ⇒ an ephemeral dev key (restarts rotate it; development only).
+# jwk_path = "/etc/siros-flow/signing.jwk"
+
+[issuer]
+# The issuer BACKEND the issuance steps drive (the integrator
+# surface: create-session → the credential offer).
+backend_url = "http://127.0.0.1:8080"
+# The assertion's aud: the issuer's public identifier.
+audience = "http://127.0.0.1:8080"
+# This service's integrator identity (the assertion's iss/sub) —
+# registered in the issuer's [authorization.clients].
+integrator_id = "https://flow.siros.org/"
+# The integrator signing key (JWK file; the issuer's registry carries
+# the public key).
+integrator_key_path = "config/integrator.jwk"
+
+# The PDP deciding presentation trust (go-trust's AuthZEN evaluation
+# endpoint). Absent ⇒ fail-closed: every presentation trust decision
+# refuses.
+# pdp = "http://go-trust:8080/api/az"
+
+# How long an armed OID4VP request may wait for its response.
+presentation_ttl_seconds = 300
+# Flow instance retention after expiry (the sweep).
+retention_after_final_seconds = 3600

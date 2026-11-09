@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 use crate::error::Result;
 use crate::language::ContextRef;
 
-/// The in-memory flow context (the unsealed working set).
-#[derive(Debug, Clone, Default)]
+/// The in-memory flow context (the unsealed working set) — the
+/// serialized form is what the vault seals and the FlowStore stores.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct FlowContext {
     /// The flow inputs (fixed at start): the initiating caller's
     /// parameters — session identity, bind rules (`rule-match`'s rule
@@ -33,10 +34,7 @@ pub struct FlowContext {
     pub verdicts: BTreeMap<String, BindVerdict>,
 }
 
-/// One presentation step's result: the verified claims and the holder
-/// keys, per credential query id. Format-tagged so the format-aware
-/// claim lookup (§5.4) knows which rule applies.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PresentationResult {
     /// credential query id → (format, verified claims object).
     pub credentials: BTreeMap<String, PresentedCredential>,
@@ -48,7 +46,7 @@ impl PresentationResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PresentedCredential {
     pub format: String,
     /// The verified claims (the verifier-core result's claims object).
