@@ -1047,7 +1047,14 @@ Carried up from issuer-core, unchanged in spirit:
   The drill therefore stops one hop short of the PDP permit — the
   hop is the wallet pair's, not flow-core's, and the scripted live
   round trip (live_gdc.rs) already proves the PDP permit path with
-  the same trust shape.
+  the same trust shape. **RESOLVED (owner-approved, the plain
+  mode):** the per-step plain direct_post opt-in (below) plus the
+  shipped ehic-pid-presentation-plain twin gave the drill a vehicle
+  the CURRENT pair completes — the drill is GREEN end-to-end: the
+  real wallet's Share → the engine's clear-form POST → the live PDP
+  PERMIT → the EHIC → the completed flow. The .jwt twin becomes the
+  drill's vehicle again once the frontend branch lands and gdc's
+  frontend re-pins.
 - **The plain direct_post mode (2026-11-10, owner-approved):**
   OID4VP's unencrypted response mode, as a per-step opt-in with the
   encrypted mode the default — verifier-core's
