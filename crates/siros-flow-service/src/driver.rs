@@ -31,6 +31,10 @@ pub struct AwaitingPresentation {
     pub jar: String,
     /// Where the wallet POSTs the `direct_post.jwt` response.
     pub response_uri: String,
+    /// The carrier this step rides ("deeplink" | "dc_api") — the reply
+    /// envelope carries it; a front-end branches on it (open a URI
+    /// vs `credentials.get`), §7.
+    pub carrier: &'static str,
 }
 
 /// The completed flow's issuance offers (deep links the wallet
@@ -235,6 +239,7 @@ async fn walk(
                     flow_instance: flow_instance.to_owned(),
                     jar: armed.jar,
                     response_uri: armed.response_uri.as_str().to_owned(),
+                    carrier: armed.carrier,
                 }));
             }
             Step::Bind(bind) => {

@@ -42,6 +42,11 @@ pub struct ServiceCfg {
     /// the flow status URLs are derived from it (the one-URL rule: it
     /// must resolve from the wallet AND from inside the deployment).
     pub public_url: Option<String>,
+    /// The carrier a wallet-facing step rides when the step does not
+    /// name one (design §7): "deeplink" (the default) or "dc_api".
+    /// An unknown name refuses configuration parsing (the closed
+    /// vocabulary — WMP is a carrier of the same kind at P-bw4).
+    pub default_carrier: Option<siros_flow_core::language::Carrier>,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]

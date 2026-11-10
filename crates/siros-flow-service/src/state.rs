@@ -39,6 +39,9 @@ pub struct FlowServiceState {
     /// The externally visible base URL (response_uri derivation).
     pub public_url: url::Url,
     pub presentation_ttl_seconds: i64,
+    /// The carrier a step rides when its definition names none
+    /// (§7; config `service.default_carrier`, default `deeplink`).
+    pub default_carrier: siros_flow_core::language::Carrier,
     pub retention_after_final_seconds: i64,
     /// The bind registry the driver resolves `primitive:` names
     /// against: the standard set (same-key + the reference plugins);

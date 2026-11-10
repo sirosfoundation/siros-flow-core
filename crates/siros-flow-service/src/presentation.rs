@@ -82,6 +82,10 @@ pub struct ArmedPresentation {
     pub response_uri: Url,
     /// The challenge handle (opaque, rides the response_uri path).
     pub handle: String,
+    /// The carrier this step rides ("deeplink" | "dc_api") — the
+    /// reply envelope carries it so a front-end knows which hand to
+    /// play (open a URI vs `credentials.get`).
+    pub carrier: &'static str,
     /// The verifier-core session, sealed for the flow record (it
     /// carries the ephemeral response-encryption key — sealed at
     /// rest, never in the clear).
@@ -108,20 +112,49 @@ pub fn arm_presentation(
     let signer = KrypteringSignerAdapter {
         inner: state.signer.clone(),
     };
-    let (jar, oid4vp_session) = oid4vp::create_request(
-        &RequestConfig {
-            response_uri: response_uri.as_str().to_owned(),
-            dcql_query,
-            ttl_secs: state.presentation_ttl_seconds,
-            vp_formats_supported: None,
-            client_id: None,
-        },
-        &signer,
-        "ES256",
-        &state.cert_chain_der,
-        now,
-    )
-    .map_err(|e| Error::new(code::INVALID_INPUT, format!("request: {e}")))?;
+    let request_config = RequestConfig {
+        response_uri: response_uri.as_str().to_owned(),
+        dcql_query,
+        ttl_secs: state.presentation_ttl_seconds,
+        vp_formats_supported: None,
+        client_id: None,
+    };
+    // The carrier decides how the request reaches the wallet (§7);
+    // verification and response processing are identical either way —
+    // only the response mode and the holder-binding audience change.
+    let (carrier, jar, oid4vp_session) = match step.carrier.unwrap_or(state.default_carrier) {
+        siros_flow_core::language::Carrier::Deeplink => {
+            let (jar, session) = oid4vp::create_request(
+                &request_config,
+                &signer,
+                "ES256",
+                &state.cert_chain_der,
+                now,
+            )
+            .map_err(|e| Error::new(code::INVALID_INPUT, format!("request: {e}")))?;
+            ("deeplink", jar, session)
+        }
+        siros_flow_core::language::Carrier::DcApi => {
+            // The DC API's holder-binding audience is the ORIGIN
+            // of the page calling `credentials.get` — this
+            // service's own public origin (the same origin that
+            // serves the front-end and the response_uri).
+            // create_dc_api_request validates the bare-origin
+            // shape and sets the DC-API handover the wallet
+            // signs into its key-binding proof.
+            let origin = state.public_url.origin().ascii_serialization();
+            let (jar, session) = oid4vp::create_dc_api_request(
+                &request_config,
+                &signer,
+                "ES256",
+                &state.cert_chain_der,
+                now,
+                &origin,
+            )
+            .map_err(|e| Error::new(code::INVALID_INPUT, format!("request: {e}")))?;
+            ("dc_api", jar, session)
+        }
+    };
 
     // Seal the verifier-core session for the flow record (the
     // ephemeral key inside; the flow vault owns it at rest).
@@ -137,6 +170,7 @@ pub fn arm_presentation(
         jar,
         response_uri,
         handle,
+        carrier,
         sealed_session: sealed,
     })
 }

@@ -67,6 +67,32 @@ pub struct PresentationStep {
     /// Every query id that must answer (default: all).
     #[serde(default)]
     pub require: Vec<String>,
+    /// The carrier this step rides (§7); absent = the deployment
+    /// default (`service.default_carrier`). The step's semantics do
+    /// not change with the carrier — only how the request reaches
+    /// the wallet and how the response comes back.
+    #[serde(default)]
+    pub carrier: Option<Carrier>,
+}
+
+/// The carrier a wallet-facing step rides (design §7):
+///
+/// - `deeplink` — QR / deep link: the request object travels a URI
+///   and the wallet POSTs the `direct_post.jwt` response to the
+///   `response_uri`.
+/// - `dc_api` — the W3C Digital Credentials API: the front-end hands
+///   the request object to `navigator.credentials.get` and POSTs the
+///   returned `data` back. The holder-binding audience is the
+///   calling page's ORIGIN (the DC API handover — verifier-core's
+///   `create_dc_api_request`), not the `client_id`.
+///
+/// WMP is a carrier of the same kind, at P-bw4; naming it today is a
+/// load refusal (the closed vocabulary — `deeplink`/`dc_api` only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Carrier {
+    Deeplink,
+    DcApi,
 }
 
 /// One DCQL credential query. `meta` carries the format's matching

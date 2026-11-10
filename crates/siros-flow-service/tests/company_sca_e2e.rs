@@ -284,6 +284,7 @@ async fn spawn_flow(
         issuer: Arc::new(client),
         public_url: Url::parse("http://127.0.0.1:8080").unwrap(),
         presentation_ttl_seconds: 300,
+        default_carrier: siros_flow_core::language::Carrier::Deeplink,
         retention_after_final_seconds: 3_600,
         bind_registry: BindRegistry::standard(),
     });

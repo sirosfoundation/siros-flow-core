@@ -522,10 +522,12 @@ Two rules keep the vocabulary honest:
   `request_uri_ref`. The response path is OID4VP's own
   (`direct_post.jwt` to the `response_uri`, or the DC API response) in
   every case.
-- **Dependency:** verifier-core's `process_response` currently refuses
-  DCQL `credential_sets` (`src/oid4vp.rs`, "not supported in the
-  spike"). P-bw2's multi-query presentations need either that lifted or
-  a documented restriction to plain `credentials` arrays.
+- **Dependency — RESOLVED (P-bw2):** the documented restriction holds —
+  multi-query presentations are plain `credentials` arrays (two
+  queries, one `vp_token`, proven end-to-end by `company-sca`);
+  verifier-core keeps refusing DCQL `credential_sets`, and so does
+  flow-core (§5.1: `require` is the flow's own all/any discipline, not
+  DCQL's).
 
 ### 6.2 `bind` — see §8.
 
@@ -955,8 +957,19 @@ Carried up from issuer-core, unchanged in spirit:
   (`company-sca`) end-to-end: one transaction, two credential
   queries, the names-comparison binds labelled probabilistic, the
   merged-subject SCA, the wrong attorney refused fail-closed
-  (`company_sca_e2e.rs`). **Remaining in the P-bw2 row:** the DC API
-  carrier.
+  (`company_sca_e2e.rs`). **The DC API carrier** (the row's
+  remainder, 2026-11-10): a presentation step names `carrier: dc_api`
+  (or the deployment default, `service.default_carrier`); verifier-
+  core's `create_dc_api_request` arms it — `response_mode
+  dc_api.jwt`, the holder-binding audience the calling page's ORIGIN
+  (the DC API handover). The reply envelope marks the carrier so a
+  front-end plays the right hand (`credentials.get` vs a URI); the
+  response path is OID4VP's own (the DigitalCredential's `data`
+  POSTs to the `response_uri`). Proven both ways
+  (`dc_api_carrier_e2e.rs`): the origin-bound presentation completes
+  the walk; the redirect flow's audience (`client_id`) is refused —
+  a DC API response cannot be replayed into a redirect context and
+  vice versa. **P-bw2 is closed.**
 
 ## 14. Open questions (the iteration list)
 

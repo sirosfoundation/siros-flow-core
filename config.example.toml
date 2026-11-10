@@ -12,6 +12,13 @@ bind = "0.0.0.0:8080"
 # status URLs derive from it (the one-URL rule: it must resolve from
 # the wallet AND from inside the deployment).
 public_url = "http://127.0.0.1:8080"
+# The carrier a wallet-facing step rides when its definition names
+# none (design §7): "deeplink" (the default — the request travels a
+# QR / deep link and the wallet POSTs the direct_post.jwt response)
+# or "dc_api" (the W3C Digital Credentials API — the front-end hands
+# the request to navigator.credentials.get; the holder-binding
+# audience is this origin). A step's own `carrier:` wins.
+# default_carrier = "deeplink"
 
 [definitions]
 # The reviewed flow definitions directory: every .yaml loads and

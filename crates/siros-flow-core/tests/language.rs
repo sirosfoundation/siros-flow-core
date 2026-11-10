@@ -137,6 +137,46 @@ fn an_empty_flow_name_refuses_and_the_name_grammar_holds() {
 }
 
 #[test]
+fn the_carrier_vocabulary_is_closed() {
+    // `dc_api` parses (the step names its carrier, §7)...
+    let definition = FlowDefinition::from_yaml(
+        "flow: dc-smoke\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      carrier: dc_api\n      request:\n        - id: pid\n          format: dc+sd-jwt\n          meta: {vct_values: [\"urn:eudi:pid:1\"]}\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Presentation(step) = &definition.steps[0] else {
+        panic!("the first step is the presentation");
+    };
+    assert_eq!(
+        step.carrier,
+        Some(siros_flow_core::language::Carrier::DcApi)
+    );
+
+    // ...and an absent carrier inherits the deployment default (None
+    // here; the service resolves it against `service.default_carrier`).
+    let definition = FlowDefinition::from_yaml(
+        "flow: dl-smoke\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      request:\n        - id: pid\n          format: dc+sd-jwt\n          meta: {vct_values: [\"urn:eudi:pid:1\"]}\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Presentation(step) = &definition.steps[0] else {
+        panic!("the first step is the presentation");
+    };
+    assert_eq!(step.carrier, None);
+
+    // WMP is a carrier of the same kind at P-bw4 (§7); naming it
+    // today is a LOAD refusal — the closed vocabulary, never a
+    // best-effort interpretation.
+    let error = FlowDefinition::from_yaml(
+        "flow: early-wmp\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      carrier: wmp\n      request:\n        - id: pid\n          format: dc+sd-jwt\n          meta: {vct_values: [\"urn:eudi:pid:1\"]}\n",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "flow_language_invalid");
+    assert!(
+        error.message.contains("wmp"),
+        "the refusal names the unknown carrier: {error}"
+    );
+}
+
+#[test]
 fn duplicate_step_ids_refuse_at_load() {
     let error = FlowDefinition::from_yaml(
         "flow: dup\nlanguage_version: 1\nsteps:\n  - presentation: {id: same, request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]}\n  - store: {id: same, key: k, value: v}\n",

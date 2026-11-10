@@ -117,6 +117,11 @@ async fn start(
         "instance": awaiting.flow_instance,
         "authorization_request": awaiting.jar,
         "response_uri": awaiting.response_uri,
+        // The carrier this step rides (§7): "deeplink" → open a URI /
+        // QR; "dc_api" → hand the request object to
+        // navigator.credentials.get and POST the returned `data` to
+        // the response_uri.
+        "carrier": awaiting.carrier,
     })))
 }
 
@@ -163,6 +168,7 @@ async fn flow_response(
             "next": "presentation",
             "authorization_request": awaiting.jar,
             "response_uri": awaiting.response_uri,
+            "carrier": awaiting.carrier,
         }))),
         WalkOutcome::Completed { flow_instance, .. } => {
             let offers = offers_of(&state, &flow_instance).await.map_err(err)?;

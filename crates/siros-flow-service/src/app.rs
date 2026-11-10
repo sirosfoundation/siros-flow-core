@@ -192,6 +192,10 @@ pub async fn build(config: &Config) -> Result<App> {
         issuer,
         public_url: public_url.clone(),
         presentation_ttl_seconds: config.presentation_ttl_seconds,
+        default_carrier: config
+            .service
+            .default_carrier
+            .unwrap_or(siros_flow_core::language::Carrier::Deeplink),
         retention_after_final_seconds: config.retention_after_final_seconds,
         bind_registry,
     });
