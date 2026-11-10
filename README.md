@@ -1,6 +1,9 @@
 # siros-flow-core
 
 [![CI](https://github.com/sirosfoundation/siros-flow-core/actions/workflows/ci.yml/badge.svg)](https://github.com/sirosfoundation/siros-flow-core/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sirosfoundation/siros-flow-core/badge)](https://scorecard.dev/viewer/?uri=github.com/sirosfoundation/siros-flow-core)
+[![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD--2--Clause-blue.svg)](LICENSE)
+[![rustc](https://img.shields.io/badge/rustc-stable-9c6144.svg)](rust-toolchain.toml)
 
 The SIROS **flow orchestration layer**: configurable business logic —
 flows that involve **authentication, verification, and issuance** — as
@@ -51,6 +54,45 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 ```
+
+## Examples
+
+`examples/` — validated working examples (built by `--all-targets`, so CI
+compiles them; each was run against this repo's own fixtures):
+
+- `crates/siros-flow-core/examples/parse-and-validate.rs` — the language's
+  whole surface: parse a definition (`FlowDefinition::from_yaml`),
+  validate it, digest it (the PDP-pinnable identity), walk its steps.
+
+  ```sh
+  cargo run -p siros-flow-core --example parse-and-validate -- flows/ehic-pid-presentation.yaml
+  ```
+
+- `crates/siros-flow-core/examples/lifecycle.rs` — the flow lifecycle
+  state machine: start an instance, drive it through
+  `Running → Waiting → Running` (armed → answered), expire it, and
+  meet the `illegal_transition` refusal (final is final; an illegal
+  combination is a stable-code refusal, never a silent no-op).
+
+  ```sh
+  cargo run -p siros-flow-core --example lifecycle -- flows/payment-receipt.yaml
+  ```
+
+- `examples/service/` — a complete runnable service deployment
+  (`config.toml` + the dev verifier keypair and x5c chain it references):
+
+  ```sh
+  cargo run -p siros-flow-service -- examples/service/config.toml &
+  curl -s -X POST localhost:8790/flows/payment-receipt/start \
+    -H 'content-type: application/json' -d '{}' | jq .
+  ```
+
+  The start answers the carrier envelope (§7) — the signed request
+  object a wallet scans (deep link) or the front-end hands to
+  `navigator.credentials.get` (DC API), with the status URLs. The
+  example ships **no PDP by default**, so a wallet's presentation
+  answer resolves `pdp_unavailable` — fail-closed by design; point
+  `pdp` in the config at a live go-trust for the full pass.
 
 ## License
 

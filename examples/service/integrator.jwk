@@ -1,0 +1,10 @@
+{
+  "kty": "EC",
+  "crv": "P-256",
+  "alg": "ES256",
+  "use": "sig",
+  "kid": "flow-example-integrator",
+  "d": "ZcsL8cmBRYQsgkM1LFe5aIC7C_DvGQN3Tc3Wu-8Miw4",
+  "x": "J2JJAxaWIYs8JkPgcy4-r1VDpMt8k90lg2_eDiGByfw",
+  "y": "t2MGsMOD80WbW51yQ_jWlIanrWl0PsPARGC5b14Mk5s"
+}

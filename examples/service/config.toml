@@ -1,0 +1,69 @@
+# A COMPLETE, runnable flow-service deployment: every reviewed flow
+# in the repo's flows/ set, a dev verifier keypair + x5c chain (the
+# request-object signature a wallet verifies), and (by default) NO
+# PDP - the fail-closed presentation trust the design calls for,
+# demonstrated honestly.
+
+# Top-level keys (before any [section] - a key after a section header
+# belongs to that section, TOML's one trap here).
+# How long an armed OID4VP request may wait for its response.
+presentation_ttl_seconds = 300
+# Flow instance retention after expiry (the sweep).
+retention_after_final_seconds = 3600
+# The PDP deciding presentation trust (go-trust's AuthZEN evaluation
+# endpoint). ABSENT => every presentation trust decision refuses
+# (pdp_unavailable) - the demonstration this example ships with:
+# pdp = "http://127.0.0.1:8081/api/az"
+#
+# Start it:
+#   cargo run -p siros-flow-service -- examples/service/config.toml
+#
+# Then (another shell) - start a flow:
+#   curl -s -X POST localhost:8790/flows/payment-receipt/start \
+#     -H 'content-type: application/json' -d '{}' | jq .
+#
+# The response carries the carrier envelope (design §7): the deep link
+# a wallet scans (or the DC API request the front-end hands to
+# navigator.credentials.get) and the status URLs the wallet drives
+# the flow through. A wallet's presentation answer then resolves
+# `pdp_unavailable` - fail-closed: a missing PDP is a refusal, never
+# a bypass. Point `pdp` below at a live go-trust for the full pass.
+
+[service]
+bind = "127.0.0.1:8790"
+# The one-URL rule: response_uri and the status URLs derive from it,
+# and it must resolve from the wallet AND from inside this process.
+# localhost is only fine for a wallet on the same machine (an emulator,
+# a Waydroid instance); anything else needs the LAN/Fly URL here.
+public_url = "http://127.0.0.1:8790"
+# The QR / deep link carries the request when a step names no carrier.
+default_carrier = "deeplink"
+
+[definitions]
+# Every .yaml in the directory loads, validates, and serves - or
+# startup refuses (fail-closed: no partial loads).
+dir = "flows"
+
+[signing]
+# The request-object signing key: the family's PKCS#8 EC P-256 PEM shape
+# (fixtures/vc-pki/verifier-style) + the x5c chain a wallet/PDP trusts
+# the leaf by (leaf first). This example ships a DEV-ONLY pair
+# (examples/service/verifier_*): any real deployment generates its own
+# and registers the chain where its PDP finds it.
+pem_path = "examples/service/verifier_signing.p8.pem"
+cert_chain_path = "examples/service/verifier_chain.pem"
+# A JWK shape instead:
+# jwk_path = "examples/service/signing.jwk"
+
+[issuer]
+# The issuer BACKEND the issuance steps drive (the integrator
+# surface: create-session → the credential offer).
+backend_url = "http://127.0.0.1:8080"
+# The assertion's aud: the issuer's public identifier.
+audience = "http://127.0.0.1:8080"
+# This service's integrator identity (the assertion's iss/sub) —
+# registered in the issuer's [authorization.clients].
+integrator_id = "https://flow.example/"
+# The integrator signing key (JWK file; the issuer's registry carries
+# the public key). Absent => an ephemeral dev key (development only).
+integrator_key_path = "examples/service/integrator.jwk"
