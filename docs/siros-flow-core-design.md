@@ -576,10 +576,22 @@ never silently continues.
 
 ### 6.6 `store` / `notify`
 
-`store` writes a context value under a declared key (validated against
-the definition's own schema of what steps may read). `notify` emits a
-carrier message to the flow's target (a WMP notification when the
-target is an instance) or a typed SSE event for the embedding frontend — the "one state machine, two audiences" shape again.
+`store` writes a context value under its step id — the one addressing
+discipline for derived values (§5.5): a `store`/`token`/`fetch` step's
+output is keyed by its id, and later steps reference it
+`{step: <id>, path: [...]}` (a `credential` member on such a ref is a
+definition error — derived values are not presentations). `notify`
+(**LANDED, v1**) emits a typed event: a stable kind token plus an
+optional definition-authored message LITERAL (a context ref here
+refuses at load — events are narration, and context values never leave
+the process, §10.1, nor ride event surfaces, §10.2). The events ride the
+CLEAR part of the record (kinds, authored text, step ids, timestamps —
+never values); the status read reports them, and
+`GET /flows/{instance}/events` streams them as typed SSE for the
+embedding frontend (resumable via `Last-Event-ID`; the stream polls
+the store until the instance is final — the store trait unchanged).
+The WMP carrier at P-bw4 is the instance audience's delivery — the
+"one state machine, two audiences" shape again.
 
 ### 6.7 Plugins
 
@@ -932,6 +944,23 @@ Carried up from issuer-core, unchanged in spirit:
 | **P-bw4** | WMP carrier (`wmp.flow.*` adapter, instance selectors, `oid4vp`/`oid4vci` flow types); §2.1 flows 2–3 | wallet instance round-trip over WMP — against `siros-wallet-headless` as the instance it orchestrates (§7, Q10 resolved) |
 
 **Evidence (the exit criteria, as landed):**
+
+- **The vocabulary closure (2026-11-10, post-P-bw3):** `notify` landed
+  (§6.6 — the last v1 step kind): the typed event + the SSE stream,
+  kinds and authored text only (§10); the shipped ehic flow notifies
+  `credential-issued`, and the ehic e2e reads the event from the
+  status AND from the live stream. **Flow 4 ships in `flows/`**
+  (token-sourced-attestation): the plugin contract is the NAME `idp` —
+  gdc wires it to the mini-oidc via JWKS DISCOVERY (its key is
+  ephemeral per boot — a static pin can never be honest; the reference
+  plugin's discovery source fetches + caches, selects by kid, and
+  picks up rotation — tested), the local overlay wires the compose
+  mini-oidc, and the app-build load gate is tested for the whole
+  shipped set (plugins.rs). **The recorded digests** (§11's goFF
+  model, landed): tests/fixtures/recorded-flow-digests.json — every
+  shipped flow's digest is asserted; a definition change is a visible
+  diff against that file (regenerate deliberately with the
+  gen-digests example).
 
 - **P-bw1 (2026-11-09/10):** the pre-auth PID→bind→issue flow
   definition-only; five shipped definitions, all digest-stable; the

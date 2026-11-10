@@ -674,6 +674,15 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
             .is_some_and(|digest| !digest.is_empty()),
         "the digest rides the instance"
     );
+    // §6.6: the notify step's typed event rides the record — the
+    // kind and the definition-authored message, never values.
+    let events = status["events"].as_array().expect("the event log");
+    assert!(
+        events.iter().any(|e| e["event"] == "credential-issued"
+            && e["step"] == "tell-issued"
+            && e["message"].as_str().is_some_and(|m| m.contains("EHIC"))),
+        "the events: {events:?}"
+    );
     // The status is clear-data only: no claim values (§10).
     let raw = status.to_string();
     assert!(!raw.contains("Presented"), "no subject data in status");
@@ -686,5 +695,152 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
     assert!(
         deep_link.starts_with("openid-credential-offer://?credential_offer_uri="),
         "{deep_link}"
+    );
+}
+
+// ─── §6.6: the typed SSE stream (the embedding frontend's audience) ────────
+
+#[tokio::test]
+async fn the_sse_stream_delivers_the_typed_event_live() {
+    use futures_util::StreamExt;
+    use siros_verifier_core::sdjwt::HashAlg;
+    use siros_verifier_core::testutil::{self, IssueSpec, KbSpec, Seg};
+
+    let (integrator_signer, integrator_private) = test_signer("flow-integrator-key");
+    let _ = integrator_signer;
+    let (issuer_url, _issuer_signer, _allocator) =
+        spawn_issuer(&integrator_private.to_public_jwk()).await;
+    let definitions_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../flows")
+        .display()
+        .to_string();
+    let flow_url = spawn_flow(
+        &definitions_dir,
+        &issuer_url,
+        siros_issuer_core::oid4vci::issuer_identifier(&Url::parse(ISSUER_BASE).unwrap()).to_owned(),
+        integrator_private,
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    // Start the flow and SUBSCRIBE before driving the walk — the
+    // stream must deliver the event as it is recorded.
+    let start: Value = client
+        .post(format!("{flow_url}/flows/ehic-pid-presentation/start"))
+        .json(&json!({"coverage": {"pan": "n/a", "document_number": "n/a", "starting_date": "n/a", "ending_date": "n/a", "date_of_issuance": "n/a", "authentic_source": "n/a"}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let instance = start["instance"].as_str().unwrap().to_owned();
+    let jar = start["authorization_request"].as_str().unwrap().to_owned();
+    let response = client
+        .get(format!("{flow_url}/flows/{instance}/events"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/event-stream",
+        "the SSE media type"
+    );
+
+    // Drive the walk (the same presentation leg as the main e2e).
+    let payload: Value = serde_json::from_slice(
+        &siros_issuer_core::sdjwt_issue::b64u_decode(jar.split('.').nth(1).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let nonce = payload["nonce"].as_str().unwrap().to_owned();
+    let oid4vp_state = payload["state"].as_str().unwrap().to_owned();
+    let client_id = payload["client_id"].as_str().unwrap().to_owned();
+    let response_uri = payload["response_uri"]
+        .as_str()
+        .unwrap()
+        .replace(ISSUER_BASE, flow_url.trim_end_matches('/'));
+    let enc_pub: jose_rs::jwk::Jwk =
+        serde_json::from_value(payload["client_metadata"]["jwks"]["keys"][0].clone()).unwrap();
+    let enc_kid = enc_pub.kid.clone().unwrap();
+
+    let (issuer_cert, issuer_key) = testutil::self_signed_ec("pid-issuer.example", "ES256");
+    let holder = testutil::ec_jwk("ES256", "holder");
+    let now = now_unix();
+    let mut spec = IssueSpec::new(json!({
+        "iss": "https://pid-issuer.example",
+        "vct": "urn:eudi:pid:1",
+        "iat": now - 10,
+        "exp": now + 100_000,
+        "given_name": "Streamed",
+        "family_name": "Event",
+        "birthdate": "1999-12-31",
+    }));
+    spec.holder_pub = Some(testutil::public_of(&holder));
+    spec.x5c_der = vec![issuer_cert];
+    spec.conceal = vec![
+        vec![Seg::Key("given_name")],
+        vec![Seg::Key("family_name")],
+        vec![Seg::Key("birthdate")],
+    ];
+    let issued = testutil::issue(&issuer_key, &spec).unwrap();
+    let presentation = testutil::present(
+        &issued,
+        &[0, 1, 2],
+        Some(KbSpec {
+            holder: &holder,
+            aud: &client_id,
+            nonce: &nonce,
+            iat: now,
+        }),
+        HashAlg::Sha256,
+    )
+    .unwrap();
+    let body = serde_json::to_vec(&json!({
+        "vp_token": { "pid": [presentation] },
+        "state": oid4vp_state,
+    }))
+    .unwrap();
+    let jwe = siros_issuer_core::response::encrypt_response(
+        &enc_pub,
+        &body,
+        Some(&enc_kid),
+        jose_rs::algorithm::JweEncryption::A128GCM,
+    )
+    .unwrap();
+    let reply: Value = client
+        .post(&response_uri)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("response={}", urlencoding::encode(&jwe)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reply["next"], "complete", "the walk completed: {reply}");
+
+    // The stream: read frames until the typed event arrives (the
+    // completion closed the walk, so the stream delivers and ends).
+    let mut stream = response.bytes_stream();
+    let mut received = String::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_secs(3), stream.next()).await {
+            Ok(Some(Ok(bytes))) => received.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(None) => break,  // the stream closed (final state)
+            Err(_) => continue, // the poll tick — keep reading
+            Ok(Some(Err(e))) => panic!("the stream errored: {e}"),
+        }
+        if received.contains("event: credential-issued") {
+            break;
+        }
+    }
+    assert!(
+        received.contains("event: credential-issued") && received.contains("id: "),
+        "the typed event frame: {received}"
+    );
+    assert!(
+        received.contains("EHIC offer is ready"),
+        "the definition-authored message rides the frame: {received}"
     );
 }

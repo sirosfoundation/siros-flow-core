@@ -53,6 +53,8 @@ pub enum Step {
     Token(TokenStep),
     /// An external API called through a named provider plugin (§6.5).
     Fetch(FetchStep),
+    /// A typed event emitted to the flow's audiences (§6.6).
+    Notify(NotifyStep),
     /// Early flow-stop (goFF/pyFF `end`). No parameters.
     End,
 }
@@ -283,6 +285,27 @@ pub struct FetchStep {
     pub inputs: BTreeMap<String, ContextRef>,
 }
 
+/// One `notify` step (§6.6): emit a typed event to the flow's
+/// audiences — a carrier message (a WMP notification when the target
+/// is an instance, at P-bw4) or a typed SSE event for the embedding
+/// frontend ("one state machine, two audiences").
+///
+/// Events carry the KIND (a stable token the consumer switches on)
+/// and an optional MESSAGE: a **definition-authored literal**. A
+/// context reference here refuses at load — events are narration,
+/// and context values never leave the process (§10.1) nor ride
+/// event surfaces (§10.2's never-values discipline).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotifyStep {
+    pub id: String,
+    /// The event kind — a stable token (`[a-z0-9._-]`).
+    pub event: String,
+    /// A definition-authored message literal (optional).
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
 // ─── Load + validate + digest ──────────────────────────────────────────────
 
 impl FlowDefinition {
@@ -377,6 +400,24 @@ impl FlowDefinition {
                         )));
                     }
                     fetch.id.as_str()
+                }
+                Step::Notify(notify) => {
+                    validate_step_id(&notify.id, index, "notify")?;
+                    if notify.event.trim().is_empty() {
+                        return Err(Error::language_invalid(format!(
+                            "step {index} (notify {:?}): an empty event kind",
+                            notify.id
+                        )));
+                    }
+                    if !notify.event.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-')
+                    }) {
+                        return Err(Error::language_invalid(format!(
+                            "step {index} (notify {:?}): the event kind is a stable token ([a-z0-9._-])",
+                            notify.id
+                        )));
+                    }
+                    notify.id.as_str()
                 }
                 Step::End => "",
             };

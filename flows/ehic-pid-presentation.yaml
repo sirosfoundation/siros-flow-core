@@ -55,3 +55,12 @@ steps:
           ending_date: { input: coverage, path: [ending_date] }
           date_of_issuance: { input: coverage, path: [date_of_issuance] }
           authentic_source: { input: coverage, path: [authentic_source] }
+
+  # §6.6: the typed event for the flow's audiences — the embedding
+  # frontend's SSE stream (and, at P-bw4, the WMP carrier's instance
+  # notification). Kinds and definition-authored text only: context
+  # values never ride events (§10.1/§10.2).
+  - notify:
+      id: tell-issued
+      event: credential-issued
+      message: "The EHIC offer is ready to redeem in your wallet."

@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use serde::{Deserialize, Serialize};
+
 use siros_flow_core::engine::FlowInstance;
 use siros_flow_core::{Error, Result};
 
@@ -27,11 +29,27 @@ pub struct ArmedStep {
     pub jar: String,
 }
 
+/// One recorded notification event (§6.6) — the CLEAR part of the
+/// record: the kind, the definition-authored message text, the step
+/// id, the timestamp. Context values never ride events (§10.1/§10.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordedEvent {
+    /// The event kind (the definition's stable token).
+    pub event: String,
+    /// The definition-authored message literal, if any.
+    pub message: Option<String>,
+    /// The notify step's id.
+    pub step_id: String,
+    /// When the walk recorded it (unix seconds).
+    pub at_unix: i64,
+}
+
 /// The stored flow record: the clear/sealed split (§5.5). In the
 /// clear — the instance (state, position, digest), the armed step,
-/// the version. Sealed under the vault — everything subject-shaped:
-/// the whole FlowContext (inputs, presentation claims, holder keys,
-/// derived values, issuance refs, verdicts).
+/// the recorded notification events (§6.6), the version. Sealed under
+/// the vault — everything subject-shaped: the whole FlowContext
+/// (inputs, presentation claims, holder keys, derived values,
+/// issuance refs, verdicts).
 #[derive(Debug, Clone)]
 pub struct FlowRecord {
     /// The instance id (the store's key — `<flow>_<random>`); the
@@ -42,6 +60,9 @@ pub struct FlowRecord {
     pub armed: Option<ArmedStep>,
     /// The sealed FlowContext (the vault's envelope).
     pub sealed_context: Vec<u8>,
+    /// The recorded notification events (§6.6) — clear: kinds and
+    /// authored text, never values.
+    pub events: Vec<RecordedEvent>,
     /// The CAS token: every `step`/`take` compares-and-sets on it.
     pub version: u64,
 }
@@ -54,6 +75,7 @@ impl FlowRecord {
             instance,
             armed: None,
             sealed_context,
+            events: Vec::new(),
             version: 0,
         }
     }
@@ -73,6 +95,7 @@ pub trait FlowStore: Send + Sync {
         instance: FlowInstance,
         armed: Option<ArmedStep>,
         sealed_context: Vec<u8>,
+        events: Vec<RecordedEvent>,
     ) -> Result<FlowRecord>;
     /// Find the record an armed response handle belongs to
     /// (read-only: the DPoP-less check-then-take discipline — verify
@@ -134,6 +157,7 @@ impl FlowStore for MemoryFlowStore {
         instance: FlowInstance,
         armed: Option<ArmedStep>,
         sealed_context: Vec<u8>,
+        events: Vec<RecordedEvent>,
     ) -> Result<FlowRecord> {
         let mut records = self.records.write().map_err(|_| poisoned())?;
         let mut handles = self.by_handle.write().map_err(|_| poisoned())?;
@@ -156,6 +180,7 @@ impl FlowStore for MemoryFlowStore {
         record.instance = instance;
         record.armed = armed;
         record.sealed_context = sealed_context;
+        record.events = events;
         Ok(record.clone())
     }
 

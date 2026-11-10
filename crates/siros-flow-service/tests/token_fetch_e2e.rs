@@ -257,7 +257,8 @@ async fn spawn_flow(
         siros_flow_service::plugins::IdTokenPlugin::from_config(
             &siros_flow_service::config::TokenPluginCfg {
                 name: "test-idp".to_owned(),
-                key_path: idp_public_key_path.to_owned(),
+                key_path: Some(idp_public_key_path.to_owned()),
+                jwks_uri: None,
                 issuer: "https://idp.example.org".to_owned(),
                 audience: "https://flow.example.org".to_owned(),
                 leeway_seconds: 60,

@@ -26,6 +26,15 @@ fn key_file(tag: &str) -> (String, jose_rs::jwk::Jwk) {
     (path.display().to_string(), jwk)
 }
 
+/// A PUBLIC key file (the token plugin's pinned source refuses
+/// private material — the IdP's signing key stays the IdP's).
+fn public_key_file(tag: &str) -> String {
+    let (path, jwk) = key_file(tag);
+    let public = serde_json::to_string(&jwk.to_public_jwk()).unwrap();
+    std::fs::write(&path, public).unwrap();
+    path
+}
+
 fn cert_chain(private: &jose_rs::jwk::Jwk, host: &str) -> String {
     let d = private.d.as_deref().expect("private scalar");
     let bytes = siros_issuer_core::sdjwt_issue::b64u_decode(d).expect("d is base64url");
@@ -57,6 +66,7 @@ async fn one_service_one_port_the_whole_journey() {
     let (verifier_key_path, verifier_key) = key_file("verifier");
     let (issuer_key_path, issuer_key) = key_file("issuer-signing");
     let (integrator_key_path, _integrator_key) = key_file("integrator");
+    let idp_key_path = public_key_file("idp");
     let chain_path = cert_chain(&verifier_key, "flow.local");
 
     let testdata = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -152,6 +162,15 @@ cert_chain_path = "{chain_path}"
 status_mode = "service"
 integrator_id = "https://flow.local/integrator"
 integrator_key_path = "{integrator_key_path}"
+
+# The shipped flow 4 (token-sourced-attestation) references the "idp"
+# token plugin — a pinned test key so the app-build load gate passes
+# with the shipped set.
+[[plugins.token]]
+name = "idp"
+key_path = "{idp_key_path}"
+issuer = "https://idp.example.org"
+audience = "{base}"
 
 # The embedded issuer: a complete siros-issuer-service config — the
 # additional trusted issuer's own identity.
@@ -446,6 +465,7 @@ async fn the_local_status_list_serves_the_credentials_it_backs() {
     let (verifier_key_path, verifier_key) = key_file("local-verifier");
     let (issuer_key_path, issuer_key) = key_file("local-issuer-signing");
     let (integrator_key_path, _integrator_key) = key_file("local-integrator");
+    let idp_key_path = public_key_file("local-idp");
 
     let testdata = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../testdata")
@@ -493,6 +513,15 @@ cert_chain_path = "{chain_path}"
 [issuer]
 integrator_id = "https://flow.local/integrator"
 integrator_key_path = "{integrator_key_path}"
+
+# The shipped flow 4 (token-sourced-attestation) references the "idp"
+# token plugin — a pinned test key so the app-build load gate passes
+# with the shipped set.
+[[plugins.token]]
+name = "idp"
+key_path = "{idp_key_path}"
+issuer = "https://idp.example.org"
+audience = "{base}"
 
 [embedded.issuer]
 url = "{base}"

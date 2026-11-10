@@ -35,7 +35,14 @@ async fn insert_update_and_the_version_cas() {
         .step(siros_flow_core::engine::FlowEvent::StepArmed)
         .unwrap();
     let updated = store
-        .update("cas", record.version, moved, None, vec![4, 5, 6])
+        .update(
+            "cas",
+            record.version,
+            moved,
+            None,
+            vec![4, 5, 6],
+            Vec::new(),
+        )
         .await
         .unwrap();
     assert_eq!(updated.version, 1);
@@ -43,7 +50,14 @@ async fn insert_update_and_the_version_cas() {
     // A stale version refuses — a concurrent response and a sweep
     // cannot interleave.
     let stale = store
-        .update("cas", 0, updated.instance.clone(), None, Vec::new())
+        .update(
+            "cas",
+            0,
+            updated.instance.clone(),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
         .await
         .unwrap_err();
     assert_eq!(stale.code, "illegal_transition");

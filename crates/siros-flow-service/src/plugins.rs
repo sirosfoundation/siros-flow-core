@@ -31,8 +31,12 @@ use siros_flow_core::{Error, Result};
 
 // ─── The traits ────────────────────────────────────────────────────────────
 
-/// A token-verification plugin (§6.4). Pure verification over the
-/// context and its configured key material — no I/O, no policy.
+/// A token-verification plugin (§6.4). Verification over the context
+/// and its configured key material — no policy. The STATIC-key source
+/// is pure (no I/O); the DISCOVERY source (a `jwks_uri` — the only
+/// honest wiring for an IdP that mints ephemeral keys, like the
+/// mini-oidc) fetches and caches the JWKS, so the trait is async.
+#[async_trait::async_trait]
 pub trait TokenPlugin: Send + Sync {
     /// The name the flow language references (`plugin: <name>`).
     fn name(&self) -> &str;
@@ -42,7 +46,7 @@ pub trait TokenPlugin: Send + Sync {
     /// Verify the token the step's parameters name, from the flow
     /// context; the verified claims are the return value (the driver
     /// lands them in the context's derived values under the step id).
-    fn verify(
+    async fn verify(
         &self,
         context: &FlowContext,
         params: &serde_json::Value,
@@ -174,11 +178,12 @@ pub fn validate_definition(
 /// `verify_bearer_assertion` performs in issuer-core (the RFC 7523
 /// client-assertion discipline, service/src/auth.rs), generalized to
 /// the deployment's own asserting party.
+#[derive(Debug)]
 pub struct IdTokenPlugin {
     name: String,
-    /// The asserting party's public key (config; the family's key
-    /// file shapes).
-    key: jose_rs::jwk::Jwk,
+    /// The asserting party's key material: a pinned static key, or a
+    /// discovered JWKS (fetched + cached, selected by `kid`).
+    key_source: KeySource,
     /// The expected `iss`.
     issuer: String,
     /// The expected `aud` (a string, or an element of an array).
@@ -187,20 +192,177 @@ pub struct IdTokenPlugin {
     leeway_seconds: i64,
 }
 
+/// How the reference plugin resolves the asserting party's key.
+#[derive(Debug)]
+enum KeySource {
+    /// A pinned static key (config `key_path`) — a key-pinned party
+    /// never rotates silently.
+    Pinned(Box<jose_rs::jwk::Jwk>),
+    /// OIDC discovery (config `jwks_uri`): the JWKS fetched on cache
+    /// miss and held for the TTL — the only honest wiring for an IdP
+    /// that mints ephemeral keys per boot (the mini-oidc).
+    Discovered(Box<DiscoveredJwks>),
+}
+
+/// The discovery source's state.
+#[derive(Debug)]
+struct DiscoveredJwks {
+    uri: url::Url,
+    client: reqwest::Client,
+    cache: std::sync::RwLock<Option<JwksCache>>,
+}
+
+/// The cached JWKS (fetched_at + the parsed keys).
+#[derive(Debug)]
+struct JwksCache {
+    fetched_at_unix: i64,
+    keys: Vec<jose_rs::jwk::Jwk>,
+}
+
+/// The JWKS cache TTL: a redeployed IdP's new keys are picked up
+/// within five minutes.
+const JWKS_TTL_SECONDS: i64 = 300;
+
 impl IdTokenPlugin {
-    /// Build from the deployment's `[[plugins.token]]` stanza.
+    /// Build from the deployment's `[[plugins.token]]` stanza: exactly
+    /// one of `key_path` (pinned) or `jwks_uri` (discovery).
     pub fn from_config(cfg: &crate::config::TokenPluginCfg) -> Result<Self> {
-        let key = crate::keys::load_public_key_file(&cfg.key_path)?;
+        let key_source = match (&cfg.key_path, &cfg.jwks_uri) {
+            (Some(path), None) => KeySource::Pinned(Box::new(crate::keys::load_public_key_file(path)?)),
+            (None, Some(uri)) => {
+                let uri: url::Url = uri.parse().map_err(|e| {
+                    Error::configuration(format!("plugins.token {}: jwks_uri: {e}", cfg.name))
+                })?;
+                if !matches!(uri.scheme(), "http" | "https") {
+                    return Err(Error::configuration(format!(
+                        "plugins.token {}: jwks_uri must be HTTP(S)",
+                        cfg.name
+                    )));
+                }
+                KeySource::Discovered(Box::new(DiscoveredJwks {
+                    uri,
+                    client: reqwest::Client::builder()
+                        .build()
+                        .map_err(|e| Error::configuration(format!("plugins.token {}: {e}", cfg.name)))?,
+                    cache: std::sync::RwLock::new(None),
+                }))
+            }
+            _ => {
+                return Err(Error::configuration(format!(
+                    "plugins.token {}: exactly one of key_path (pinned) or jwks_uri (discovery) is required",
+                    cfg.name
+                )))
+            }
+        };
         Ok(Self {
             name: cfg.name.clone(),
-            key,
+            key_source,
             issuer: cfg.issuer.clone(),
             audience: cfg.audience.clone(),
             leeway_seconds: cfg.leeway_seconds,
         })
     }
+
+    /// Resolve the verification key for the presented `kid`.
+    async fn resolve_key(&self, kid: Option<&str>) -> Result<jose_rs::jwk::Jwk> {
+        match &self.key_source {
+            KeySource::Pinned(key) => Ok((**key).clone()),
+            KeySource::Discovered(discovered) => {
+                let (uri, client, cache) = (&discovered.uri, &discovered.client, &discovered.cache);
+                // Fresh cache: select by kid (or the single key when
+                // the assertion carries none).
+                {
+                    let guard = cache
+                        .read()
+                        .map_err(|_| Error::configuration("the jwks cache lock"))?;
+                    if let Some(cached) = guard.as_ref() {
+                        if crate::status::now_unix() - cached.fetched_at_unix < JWKS_TTL_SECONDS {
+                            return select_jwks_key(&cached.keys, kid);
+                        }
+                    }
+                }
+                // Miss or stale: fetch, parse, cache, select.
+                let response = client
+                    .get(uri.clone())
+                    .timeout(std::time::Duration::from_secs(10))
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        Error::new(siros_flow_core::error::code::TRANSPORT, e.to_string())
+                    })?;
+                let status = response.status();
+                if !status.is_success() {
+                    return Err(Error::new(
+                        siros_flow_core::error::code::TRANSPORT,
+                        format!("the IdP's JWKS endpoint answered {status}"),
+                    ));
+                }
+                let body = response.bytes().await.map_err(|e| {
+                    Error::new(siros_flow_core::error::code::TRANSPORT, e.to_string())
+                })?;
+                if body.len() > 65_536 {
+                    return Err(Error::new(
+                        siros_flow_core::error::code::TRANSPORT,
+                        "the IdP's JWKS exceeds the response budget",
+                    ));
+                }
+                let jwks: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
+                    Error::new(
+                        siros_flow_core::error::code::TRANSPORT,
+                        format!("the IdP's JWKS is not JSON: {e}"),
+                    )
+                })?;
+                let keys: Vec<jose_rs::jwk::Jwk> = jwks["keys"]
+                    .as_array()
+                    .ok_or_else(|| {
+                        Error::new(
+                            siros_flow_core::error::code::TRANSPORT,
+                            "the IdP's JWKS carries no keys",
+                        )
+                    })?
+                    .iter()
+                    .filter_map(|k: &serde_json::Value| {
+                        serde_json::from_value::<jose_rs::jwk::Jwk>(k.clone()).ok()
+                    })
+                    .filter(|k: &jose_rs::jwk::Jwk| k.d.is_none())
+                    .collect();
+                let fetched = JwksCache {
+                    fetched_at_unix: crate::status::now_unix(),
+                    keys: keys.clone(),
+                };
+                if let Ok(mut guard) = cache.write() {
+                    *guard = Some(fetched);
+                }
+                select_jwks_key(&keys, kid)
+            }
+        }
+    }
 }
 
+/// Pick the JWKS key: by the assertion's `kid`, else the single
+/// candidate (a multi-key set without a kid is ambiguous — refuse,
+/// never guess a verifier).
+fn select_jwks_key(keys: &[jose_rs::jwk::Jwk], kid: Option<&str>) -> Result<jose_rs::jwk::Jwk> {
+    match kid {
+        Some(kid) => keys
+            .iter()
+            .find(|k| k.kid.as_deref() == Some(kid))
+            .cloned()
+            .ok_or_else(|| {
+                Error::new(
+                    siros_flow_core::error::code::INVALID_INPUT,
+                    format!("the IdP's JWKS carries no key for kid {kid:?}"),
+                )
+            }),
+        None if keys.len() == 1 => Ok(keys[0].clone()),
+        None => Err(Error::new(
+            siros_flow_core::error::code::INVALID_INPUT,
+            "the assertion carries no kid and the IdP's JWKS is not unambiguous",
+        )),
+    }
+}
+
+#[async_trait::async_trait]
 impl TokenPlugin for IdTokenPlugin {
     fn name(&self) -> &str {
         &self.name
@@ -220,7 +382,7 @@ impl TokenPlugin for IdTokenPlugin {
         }
     }
 
-    fn verify(
+    async fn verify(
         &self,
         context: &FlowContext,
         params: &serde_json::Value,
@@ -245,9 +407,13 @@ impl TokenPlugin for IdTokenPlugin {
                 ))
             }
         }
-        // Signature: ES256 against the configured key (the pinned
-        // jwk.alg carries the algorithm-allowlist discipline).
-        let payload = jose_rs::jws::compact::verify_with_jwk(&self.key, token)
+        // Signature: ES256 against the resolved key (the key's own
+        // alg carries the algorithm-allowlist discipline; a discovered
+        // key is selected by the assertion's kid header).
+        let header = jose_rs::jws::decode_header(token)
+            .map_err(|e| Error::new(siros_flow_core::error::code::INVALID_INPUT, e.to_string()))?;
+        let key = self.resolve_key(header.kid.as_deref()).await?;
+        let payload = jose_rs::jws::compact::verify_with_jwk(&key, token)
             .map_err(|e| Error::new(siros_flow_core::error::code::INVALID_INPUT, e.to_string()))?;
         let claims: serde_json::Value = serde_json::from_slice(&payload).map_err(|e| {
             Error::new(

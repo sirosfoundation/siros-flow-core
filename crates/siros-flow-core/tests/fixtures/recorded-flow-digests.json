@@ -1,0 +1,8 @@
+{
+  "company-sca": "7fcb98d3114b1fc06252b2b0ed4febd226409901096973cd606a1514d82d8833",
+  "ehic-pid-presentation": "b4d74a4b39a29fb9c59839706329c1b3b97e04c0824c0ec93f4dd4c59034c7b0",
+  "identity-bound-eucc": "6dab60b069e00dbe48e93597381a20ecad04d1fb87b6fae75d53380bba1cf584",
+  "payment-receipt": "15ea7c03292134e450bcf4b0e258ed12453f681ddfb622a1c0ed977fd4002b97",
+  "preauth-pid-issue": "eab7ce933623d61dea91bf380f6f7a5b74081dddbe91cc6f8b52f99507981f35",
+  "token-sourced-attestation": "3028644b30f0fdc7f9459b4652debe62c7f4488fdea0a32d3d521fba3371123d"
+}

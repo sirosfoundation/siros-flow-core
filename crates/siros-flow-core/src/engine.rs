@@ -193,6 +193,7 @@ pub fn step_id(step: &crate::language::Step) -> Option<&str> {
         crate::language::Step::Store(s) => Some(&s.id),
         crate::language::Step::Token(t) => Some(&t.id),
         crate::language::Step::Fetch(f) => Some(&f.id),
+        crate::language::Step::Notify(n) => Some(&n.id),
         crate::language::Step::End => None,
     }
 }

@@ -167,6 +167,82 @@ fn token_and_fetch_steps_parse_with_plugin_names() {
 }
 
 #[test]
+fn every_shipped_flow_matches_the_recorded_digest() {
+    // The goFF model: the recorded expectations live in
+    // tests/fixtures/recorded-flow-digests.json — a definition change
+    // is a VISIBLE diff against that file (the reviewer sees the
+    // identity change, not just the YAML). A changed flow fails here
+    // until the recorded digest is deliberately updated.
+    let recorded: std::collections::BTreeMap<String, String> = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/recorded-flow-digests.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../flows");
+    let mut seen = std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "yaml") {
+            let definition =
+                FlowDefinition::from_yaml(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let digest = definition.digest().to_owned();
+            let expected = recorded
+                .get(&definition.flow)
+                .unwrap_or_else(|| panic!("{} carries no recorded digest", definition.flow));
+            assert_eq!(
+                &digest, expected,
+                "{}: the definition changed — update the recorded digest deliberately                  (tests/fixtures/recorded-flow-digests.json)",
+                definition.flow
+            );
+            seen.insert(definition.flow.clone(), digest);
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        recorded.len(),
+        "the recorded set and the shipped set agree (a removed flow leaves a stale record)"
+    );
+}
+
+#[test]
+fn notify_steps_parse_and_refuse_value_references() {
+    // §6.6: the typed event — a stable kind token + an optional
+    // definition-authored message LITERAL.
+    let definition = FlowDefinition::from_yaml(
+        "flow: notify-smoke\nlanguage_version: 1\nsteps:\n  - notify:\n      id: tell-done\n      event: credential-issued\n      message: The offer is ready\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Notify(notify) = &definition.steps[0] else {
+        panic!("the first step is the notify step");
+    };
+    assert_eq!(notify.event, "credential-issued");
+    assert_eq!(notify.message.as_deref(), Some("The offer is ready"));
+
+    // A context REFERENCE as the message refuses at load: events are
+    // narration, and context values never leave the process (§10.1)
+    // nor ride event surfaces (§10.2). The message member is a
+    // string literal by type — an object ref cannot deserialize.
+    let error = FlowDefinition::from_yaml(
+        "flow: notify-ref\nlanguage_version: 1\nsteps:\n  - notify:\n      id: t\n      event: e\n      message: {step: present, path: [given_name]}\n",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "flow_language_invalid");
+
+    // The event kind is a stable token: an empty kind or a
+    // non-token kind refuses.
+    for bad in ["", "Not A Token"] {
+        let yaml = format!(
+            "flow: notify-bad\nlanguage_version: 1\nsteps:\n  - notify:\n      id: t\n      event: {bad:?}\n"
+        );
+        let error = FlowDefinition::from_yaml(&yaml).unwrap_err();
+        assert_eq!(error.code, "flow_language_invalid", "{bad:?}");
+    }
+}
+
+#[test]
 fn the_carrier_vocabulary_is_closed() {
     // `dc_api` parses (the step names its carrier, §7)...
     let definition = FlowDefinition::from_yaml(

@@ -1,0 +1,78 @@
+# §2.1 flow 4: token-sourced attestation — integrator-asserted identity
+# + PID presentation (§6.4: the integrator that runs a SAML SP asserts
+# its user the way issuer-core Mode A allows; the flow consumes the
+# asserting party's JWT as a flow input — flow-core parses no XML).
+#
+# SHIPPED because gdc wires the plugin: `[[plugins.token]] name = "idp"`
+# points at the environment's asserting party (the mini-oidc, via JWKS
+# discovery — its key is ephemeral per boot). A deployment that wires
+# its own asserting party under the same name runs this flow unchanged;
+# a deployment without the plugin refuses it at startup (§6.7, the
+# same load gate as the bind vocabulary — honest, never silent).
+
+flow: token-sourced-attestation
+language_version: 1
+description: >
+  The enterprise IdP's assertion plus the employee's PID, bound by the
+  names comparison (labelled probabilistic — §8.2), issue a staff
+  attestation over both: the PID's identity claims merged with the
+  token's employee facts.
+
+steps:
+  - token:
+      id: consume-idp-assertion
+      # The deployment's asserting party (gdc: the mini-oidc via
+      # [[plugins.token]] jwks_uri discovery — its key is ephemeral
+      # per boot, so it can never be a static pin).
+      plugin: idp
+      params:
+        token: { input: idp_assertion, path: [] }
+
+  - presentation:
+      id: present-pid
+      request:
+        - id: pid
+          format: dc+sd-jwt
+          meta:
+            # vct_values matches ANY listed type (DCQL §5.2) — the
+            # registry's PID generations, so a wallet holding any of
+            # the deployed PID types satisfies the query.
+            vct_values:
+              ["urn:eudi:pid:arf-1.8:1", "urn:eudi:pid:arf-1.5:1", "urn:eudi:pid:1"]
+          claims:
+            - { path: [given_name] }
+            - { path: [family_name] }
+      require: [pid]
+
+  - bind:
+      # The names comparison: exact as a comparison, probabilistic as
+      # identity evidence — the flow says so by naming claim-equals
+      # (§8.2). The left side is the TOKEN's asserted claim (a derived
+      # ref, §5.5); the right the PID's presented one.
+      id: pid-is-the-asserted-user
+      primitive: claim-equals
+      params:
+        left: { step: consume-idp-assertion, path: [given_name] }
+        right: { step: present-pid, credential: pid, path: [given_name] }
+      on_mismatch: fail
+
+  - issuance:
+      id: issue-staff-attestation
+      credential: "urn:ewb:staff:1"
+      subject:
+        # The identity base is the PID's verified claims; the
+        # employee facts come from the token. The catalog's claim
+        # building filters to the schema's paths either way.
+        from: { step: present-pid, credential: pid, path: [] }
+        merge:
+          employee_id: { step: consume-idp-assertion, path: [employee_id] }
+          department: { step: consume-idp-assertion, path: [department] }
+
+  - notify:
+      # §6.6: the typed event for the flow's audiences — the embedding
+      # frontend's SSE stream (the WMP carrier at P-bw4 delivers it to
+      # instances). Kinds and definition-authored text only: context
+      # values never ride events (§10.1/§10.2).
+      id: tell-issued
+      event: credential-issued
+      message: "The staff attestation offer is ready to redeem in your wallet."

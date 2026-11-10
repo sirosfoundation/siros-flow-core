@@ -37,7 +37,8 @@ fn sign_jwt(key: &jose_rs::jwk::Jwk, claims: &Value) -> String {
 fn idp_config(key_path: &str) -> TokenPluginCfg {
     TokenPluginCfg {
         name: "test-idp".to_owned(),
-        key_path: key_path.to_owned(),
+        key_path: Some(key_path.to_owned()),
+        jwks_uri: None,
         issuer: "https://idp.example.org".to_owned(),
         audience: "https://flow.example.org".to_owned(),
         leeway_seconds: 60,
@@ -123,8 +124,8 @@ fn a_fetch_step_declaring_outside_the_providers_surface_refuses_at_load() {
 
 // ─── The reference token plugin (the verify_bearer_assertion discipline) ──
 
-#[test]
-fn the_reference_token_plugin_verifies_signature_iss_aud_and_freshness() {
+#[tokio::test]
+async fn the_reference_token_plugin_verifies_signature_iss_aud_and_freshness() {
     let key = idp_key();
     let plugin = IdTokenPlugin::from_config(&idp_config(&write_public_jwk(&key))).unwrap();
     let mut context = FlowContext::default();
@@ -144,7 +145,7 @@ fn the_reference_token_plugin_verifies_signature_iss_aud_and_freshness() {
         .insert("idp_assertion".to_owned(), json!(sign_jwt(&key, &claims)));
     let params = json!({ "token": { "input": "idp_assertion", "path": [] } });
     plugin.validate_params(&params).unwrap();
-    let verified = plugin.verify(&context, &params).unwrap();
+    let verified = plugin.verify(&context, &params).await.unwrap();
     assert_eq!(verified["given_name"], "Anna");
     assert_eq!(verified["employee_id"], "emp-7");
 
@@ -158,30 +159,39 @@ fn the_reference_token_plugin_verifies_signature_iss_aud_and_freshness() {
     context
         .inputs
         .insert("idp_assertion".to_owned(), json!(sign_jwt(&key, &claims)));
-    assert!(plugin.verify(&context, &params).unwrap()["aud"].is_array());
+    assert!(plugin.verify(&context, &params).await.unwrap()["aud"].is_array());
 }
 
-#[test]
-fn the_reference_token_plugin_refuses_every_discipline_violation() {
+/// Sign the claims with the given key and verify them — the error out.
+async fn try_verify(
+    plugin: &IdTokenPlugin,
+    params: &serde_json::Value,
+    claims: Value,
+    key: &jose_rs::jwk::Jwk,
+) -> siros_flow_core::Error {
+    let mut context = FlowContext::default();
+    context
+        .inputs
+        .insert("idp_assertion".to_owned(), json!(sign_jwt(key, &claims)));
+    plugin.verify(&context, params).await.unwrap_err()
+}
+
+#[tokio::test]
+async fn the_reference_token_plugin_refuses_every_discipline_violation() {
     let key = idp_key();
     let plugin = IdTokenPlugin::from_config(&idp_config(&write_public_jwk(&key))).unwrap();
     let params = json!({ "token": { "input": "idp_assertion", "path": [] } });
 
-    let try_verify = |claims: Value, key: &jose_rs::jwk::Jwk| -> siros_flow_core::Error {
-        let mut context = FlowContext::default();
-        context
-            .inputs
-            .insert("idp_assertion".to_owned(), json!(sign_jwt(key, &claims)));
-        plugin.verify(&context, &params).unwrap_err()
-    };
-
     // The wrong signer: the signature must not verify.
     let other_key = idp_key();
     let error = try_verify(
+        &plugin,
+        &params,
         json!({"iss": "https://idp.example.org", "aud": "https://flow.example.org",
                "iat": now() - 10, "exp": now() + 300}),
         &other_key,
-    );
+    )
+    .await;
     assert!(
         error.message.to_lowercase().contains("signature")
             || error.message.to_lowercase().contains("verify"),
@@ -190,36 +200,51 @@ fn the_reference_token_plugin_refuses_every_discipline_violation() {
 
     // The wrong iss / aud.
     let error = try_verify(
+        &plugin,
+        &params,
         json!({"iss": "https://someone-else.example.org", "aud": "https://flow.example.org",
                "iat": now() - 10, "exp": now() + 300}),
         &key,
-    );
+    )
+    .await;
     assert!(error.message.contains("iss"), "{error}");
     let error = try_verify(
+        &plugin,
+        &params,
         json!({"iss": "https://idp.example.org", "aud": "https://not-us.example.org",
                "iat": now() - 10, "exp": now() + 300}),
         &key,
-    );
+    )
+    .await;
     assert!(error.message.contains("aud"), "{error}");
 
     // Freshness: expired, in the future, missing exp.
     let error = try_verify(
+        &plugin,
+        &params,
         json!({"iss": "https://idp.example.org", "aud": "https://flow.example.org",
                "iat": now() - 10_000, "exp": now() - 5_000}),
         &key,
-    );
+    )
+    .await;
     assert!(error.message.contains("expired"), "{error}");
     let error = try_verify(
+        &plugin,
+        &params,
         json!({"iss": "https://idp.example.org", "aud": "https://flow.example.org",
                "iat": now() + 10_000, "exp": now() + 20_000}),
         &key,
-    );
+    )
+    .await;
     assert!(error.message.contains("future"), "{error}");
     let error = try_verify(
+        &plugin,
+        &params,
         json!({"iss": "https://idp.example.org", "aud": "https://flow.example.org",
                "iat": now() - 10}),
         &key,
-    );
+    )
+    .await;
     assert!(error.message.contains("exp"), "{error}");
 
     // Not a compact JWT at all.
@@ -227,7 +252,7 @@ fn the_reference_token_plugin_refuses_every_discipline_violation() {
     context
         .inputs
         .insert("idp_assertion".to_owned(), json!("not-a-jwt"));
-    let error = plugin.verify(&context, &params).unwrap_err();
+    let error = plugin.verify(&context, &params).await.unwrap_err();
     assert!(error.message.contains("compact"), "{error}");
 
     // Malformed params refuse at LOAD (the validate_params discipline):
@@ -342,4 +367,167 @@ async fn the_reference_fetch_provider_enforces_the_response_budget() {
         error.message.contains("budget"),
         "the size budget refuses: {error}"
     );
+}
+
+// ─── The discovery key source (the only honest wiring for an
+//     ephemeral-key IdP — the mini-oidc mints a fresh key per boot) ─────────
+
+/// A stub JWKS server whose key can ROTATE mid-test (the redeployed
+/// IdP): the served set lives behind a lock the test swaps.
+async fn spawn_jwks() -> (
+    String,
+    std::sync::Arc<std::sync::RwLock<Vec<jose_rs::jwk::Jwk>>>,
+) {
+    let served: std::sync::Arc<std::sync::RwLock<Vec<jose_rs::jwk::Jwk>>> = Default::default();
+    let app = {
+        let served = served.clone();
+        axum::Router::new().route(
+            "/jwks",
+            axum::routing::get(move || {
+                let served = served.clone();
+                async move {
+                    let keys = served.read().map(|k| k.clone()).unwrap_or_default();
+                    let jwks: Vec<serde_json::Value> = keys
+                        .iter()
+                        .map(|k| serde_json::to_value(k.to_public_jwk()).unwrap())
+                        .collect();
+                    axum::Json(serde_json::json!({ "keys": jwks }))
+                }
+            }),
+        )
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{addr}/jwks"), served)
+}
+
+fn discovery_config(jwks_uri: &str) -> TokenPluginCfg {
+    TokenPluginCfg {
+        name: "test-idp".to_owned(),
+        key_path: None,
+        jwks_uri: Some(jwks_uri.to_owned()),
+        issuer: "https://idp.example.org".to_owned(),
+        audience: "https://flow.example.org".to_owned(),
+        leeway_seconds: 60,
+    }
+}
+
+fn claims_ok() -> Value {
+    json!({
+        "iss": "https://idp.example.org",
+        "aud": "https://flow.example.org",
+        "sub": "user-42",
+        "iat": now() - 10,
+        "exp": now() + 300,
+        "employee_id": "emp-7",
+    })
+}
+
+#[tokio::test]
+async fn the_discovery_source_verifies_and_picks_up_rotation() {
+    let (jwks_uri, served) = spawn_jwks().await;
+    let key = idp_key();
+    *served.write().unwrap() = vec![key.clone()];
+    let plugin = IdTokenPlugin::from_config(&discovery_config(&jwks_uri)).unwrap();
+    let params = json!({ "token": { "input": "idp_assertion", "path": [] } });
+
+    // The discovered key verifies the assertion.
+    let mut context = FlowContext::default();
+    context.inputs.insert(
+        "idp_assertion".to_owned(),
+        json!(sign_jwt(&key, &claims_ok())),
+    );
+    let verified = plugin.verify(&context, &params).await.unwrap();
+    assert_eq!(verified["employee_id"], "emp-7");
+
+    // Rotation — the IdP redeployed and minted a fresh key. The
+    // CACHED key keeps verifying until its TTL (honest caching, not
+    // a bug: the set was fetched minutes ago).
+    let rotated = idp_key();
+    *served.write().unwrap() = vec![rotated.clone()];
+    let still_ok = plugin.verify(&context, &params).await;
+    assert!(
+        still_ok.is_ok(),
+        "the cached key keeps verifying: {still_ok:?}"
+    );
+
+    // A second plugin instance (a process restart — its cache starts
+    // cold) fetches the ROTATED set: the old key's assertion refuses
+    // (its kid is gone from the set), the new key's assertion verifies.
+    let plugin2 = IdTokenPlugin::from_config(&discovery_config(&jwks_uri)).unwrap();
+    let error = plugin2.verify(&context, &params).await.unwrap_err();
+    assert!(
+        error.message.to_lowercase().contains("signature")
+            || error.message.to_lowercase().contains("verify")
+            || error.message.to_lowercase().contains("kid"),
+        "the rotated-out key refuses: {error}"
+    );
+    context.inputs.insert(
+        "idp_assertion".to_owned(),
+        json!(sign_jwt(&rotated, &claims_ok())),
+    );
+    let verified = plugin2.verify(&context, &params).await.unwrap();
+    assert_eq!(verified["employee_id"], "emp-7");
+}
+
+#[tokio::test]
+async fn the_key_source_config_refuses_ambiguity() {
+    // Both sources named: ambiguous — refuse.
+    let both = TokenPluginCfg {
+        name: "x".to_owned(),
+        key_path: Some("/dev/null".to_owned()),
+        jwks_uri: Some("https://idp.example.org/jwks".to_owned()),
+        issuer: String::new(),
+        audience: String::new(),
+        leeway_seconds: 60,
+    };
+    let error = IdTokenPlugin::from_config(&both).unwrap_err();
+    assert!(
+        error.message.contains("exactly one"),
+        "the ambiguity refuses: {error}"
+    );
+    // Neither: refuse.
+    let neither = TokenPluginCfg {
+        key_path: None,
+        jwks_uri: None,
+        ..both
+    };
+    let error = IdTokenPlugin::from_config(&neither).unwrap_err();
+    assert!(error.message.contains("exactly one"), "{error}");
+}
+
+#[test]
+fn every_shipped_flow_validates_against_the_shipped_plugin_names() {
+    // The load gate app::build runs for the whole shipped set: a
+    // definition referencing a plugin outside the registry refuses at
+    // startup — this is the same check with the shipped names wired.
+    use siros_flow_service::plugins::validate_definition;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../flows");
+    let key = idp_key();
+    // The SHIPPED name ("idp") — the deployments' wiring contract.
+    let shipped_idp = TokenPluginCfg {
+        name: "idp".to_owned(),
+        key_path: Some(write_public_jwk(&key)),
+        jwks_uri: None,
+        issuer: "https://idp.example.org".to_owned(),
+        audience: "https://flow.example.org".to_owned(),
+        leeway_seconds: 60,
+    };
+    let registry =
+        TokenRegistry::new().with(Box::new(IdTokenPlugin::from_config(&shipped_idp).unwrap()));
+    let fetches = FetchRegistry::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "yaml") {
+            let definition = siros_flow_core::language::FlowDefinition::from_yaml(
+                &std::fs::read_to_string(&path).unwrap(),
+            )
+            .unwrap();
+            validate_definition(&definition, &registry, &fetches)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        }
+    }
 }

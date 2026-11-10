@@ -42,6 +42,7 @@ fn main() {
             Step::Store(_) => "store",
             Step::Token(_) => "token",
             Step::Fetch(_) => "fetch",
+            Step::Notify(_) => "notify",
             Step::End => "end",
         };
         let id = siros_flow_core::engine::step_id(step).unwrap_or("-");

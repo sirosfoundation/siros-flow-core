@@ -72,6 +72,13 @@ pub fn routes(state: Arc<FlowServiceState>) -> axum::Router {
             axum::routing::get(request_object),
         )
         .route("/flows/{instance}", axum::routing::get(instance_status))
+        // §6.6's delivery for the embedding frontend: a typed SSE
+        // stream of the recorded notification events (the WMP
+        // carrier at P-bw4 is the instance audience's delivery).
+        .route(
+            "/flows/{instance}/events",
+            axum::routing::get(instance_events),
+        )
         .with_state(state)
         // The wallet-facing routes are cross-origin by design: the
         // wallet frontend fetches the request object and POSTs the
@@ -267,6 +274,79 @@ async fn flow_response(
 
 /// The instance status: lifecycle + position — the clear split only
 /// (never context values, §10).
+/// `GET /flows/{instance}/events` — the typed SSE stream of the
+/// recorded notification events (§6.6): the embedding frontend's
+/// audience. Streams the recorded events from `Last-Event-ID` (the
+/// event index) onward, polls the store until the instance reaches a
+/// final state, then closes. The instance id is the capability (the
+/// same discipline as the status read).
+async fn instance_events(
+    State(state): State<Arc<FlowServiceState>>,
+    Path(instance): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    // Resume support (SSE's Last-Event-ID = the last delivered index).
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|v| v + 1)
+        .unwrap_or(0);
+
+    // The stream: poll the store, emit events past the cursor, close
+    // on a final state. Built over ANY FlowStore (the trait unchanged
+    // — the poll lives in the handler, not the store).
+    let state_for_stream = state.clone();
+    let stream = futures_util::stream::unfold(
+        (state_for_stream, instance, last_event_id),
+        |(state, instance, mut cursor)| async move {
+            loop {
+                let Ok(Some(record)) = state.store.get(&instance).await else {
+                    // Gone (expired + swept): the stream ends.
+                    return None;
+                };
+                if record.events.len() > cursor {
+                    let event = &record.events[cursor];
+                    let frame = format!(
+                        "event: {}\nid: {}\ndata: {}\n\n",
+                        event.event,
+                        cursor,
+                        serde_json::json!({
+                            "event": event.event,
+                            "message": event.message,
+                            "step": event.step_id,
+                            "at_unix": event.at_unix,
+                        })
+                    );
+                    cursor += 1;
+                    let bytes = axum::body::Bytes::from(frame);
+                    return Some((
+                        Ok::<_, std::convert::Infallible>(bytes),
+                        (state, instance, cursor),
+                    ));
+                }
+                if record.instance.state.is_final() {
+                    // Final state + every event delivered: close.
+                    return None;
+                }
+                // Wait for the next poll tick.
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            }
+        },
+    );
+
+    let mut response = axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-store")
+        .body(axum::body::Body::from_stream(stream))
+        .expect("the SSE response builds");
+    response
+        .headers_mut()
+        .insert("access-control-allow-origin", "*".parse().unwrap());
+    response
+}
+
 async fn instance_status(
     State(state): State<Arc<FlowServiceState>>,
     Path(instance): Path<String>,
@@ -288,6 +368,20 @@ async fn instance_status(
         .iter()
         .map(|(id, step_state)| json!({ "id": id, "state": step_state.label() }))
         .collect();
+    // §6.6: the recorded notification events — kinds and
+    // definition-authored text, never values (§10.1/§10.2).
+    let events: Vec<Value> = record
+        .events
+        .iter()
+        .map(|event| {
+            json!({
+                "event": event.event,
+                "message": event.message,
+                "step": event.step_id,
+                "at_unix": event.at_unix,
+            })
+        })
+        .collect();
     Ok(Json(json!({
         "instance": instance,
         "flow": record.instance.flow,
@@ -295,6 +389,7 @@ async fn instance_status(
         "definition_digest": record.instance.definition_digest,
         "cursor": record.instance.position.cursor,
         "steps": steps,
+        "events": events,
         "created_at_unix": record.instance.created_at_unix,
         "expires_at_unix": record.instance.expires_at_unix,
     })))

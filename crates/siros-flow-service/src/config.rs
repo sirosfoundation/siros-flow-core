@@ -58,8 +58,16 @@ pub struct TokenPluginCfg {
     /// The name definitions reference (`plugin: <name>`).
     pub name: String,
     /// The asserting party's public key file — the family's shapes
-    /// (PKCS#8 EC P-256 PEM or JWK JSON).
-    pub key_path: String,
+    /// (PKCS#8 EC P-256 PEM or JWK JSON). Exactly one of `key_path`
+    /// (a static, pinned key) or `jwks_uri` (discovery) is required:
+    /// a key-pinned asserting party never rotates silently, and an
+    /// ephemeral-key IdP (mini-oidc mints a fresh key every boot) can
+    /// never be a static file.
+    pub key_path: Option<String>,
+    /// The asserting party's JWKS endpoint (OIDC discovery): the
+    /// signing keys are fetched and cached (a TTL), selected by the
+    /// assertion's `kid`.
+    pub jwks_uri: Option<String>,
     /// The expected `iss`.
     pub issuer: String,
     /// The expected `aud`.

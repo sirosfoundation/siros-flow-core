@@ -21,7 +21,7 @@ fn vault_error(error: siros_issuer_core::Error) -> Error {
 
 use crate::presentation::{arm_presentation, verify_presentation};
 use crate::state::FlowServiceState;
-use crate::store::{ArmedStep, FlowRecord};
+use crate::store::{ArmedStep, FlowRecord, RecordedEvent};
 
 /// What a walk parks on: a presentation awaiting its response.
 #[derive(Debug)]
@@ -193,7 +193,14 @@ pub async fn resume_flow(
     let sealed = seal(state, &flow_instance, &context)?;
     state
         .store
-        .update(&flow_instance, claimed.version, instance, None, sealed)
+        .update(
+            &flow_instance,
+            claimed.version,
+            instance,
+            None,
+            sealed,
+            claimed.events.clone(),
+        )
         .await?;
 
     walk(state, definition, &flow_instance).await
@@ -262,6 +269,7 @@ async fn walk(
                             jar: armed.jar.clone(),
                         }),
                         sealed,
+                        record.events.clone(),
                     )
                     .await?;
                 // The wallet-facing URL shapes: the request object is
@@ -366,7 +374,7 @@ async fn walk(
                 plugin.validate_params(&token_step.params)?;
                 // The verified claims land in the context's derived
                 // values under the step id (§5.5).
-                let claims = plugin.verify(&context, &token_step.params)?;
+                let claims = plugin.verify(&context, &token_step.params).await?;
                 context.derived.insert(token_step.id.clone(), claims);
                 record = advance(state, record, definition, flow_instance, &mut context).await?;
             }
@@ -384,13 +392,35 @@ async fn walk(
                 context.derived.insert(fetch_step.id.clone(), value);
                 record = advance(state, record, definition, flow_instance, &mut context).await?;
             }
+            Step::Notify(notify_step) => {
+                // §6.6: the typed event, recorded to the CLEAR part of
+                // the flow's record — kinds and definition-authored
+                // text, never context values (§10.1/§10.2). The SSE
+                // surface (the embedding frontend's audience) streams
+                // these; the WMP carrier (P-bw4) delivers them to
+                // instances.
+                record.events.push(RecordedEvent {
+                    event: notify_step.event.clone(),
+                    message: notify_step.message.clone(),
+                    step_id: notify_step.id.clone(),
+                    at_unix: crate::status::now_unix(),
+                });
+                record = advance(state, record, definition, flow_instance, &mut context).await?;
+            }
             Step::End => {
                 let mut instance = record.instance.clone();
                 instance.step(FlowEvent::Ended)?;
                 let sealed = seal(state, flow_instance, &context)?;
                 state
                     .store
-                    .update(flow_instance, record.version, instance, None, sealed)
+                    .update(
+                        flow_instance,
+                        record.version,
+                        instance,
+                        None,
+                        sealed,
+                        record.events.clone(),
+                    )
                     .await?;
                 return Ok(WalkOutcome::Completed {
                     flow_instance: flow_instance.to_owned(),
@@ -403,7 +433,14 @@ async fn walk(
     let sealed = seal(state, flow_instance, &context)?;
     state
         .store
-        .update(flow_instance, record.version, instance, None, sealed)
+        .update(
+            flow_instance,
+            record.version,
+            instance,
+            None,
+            sealed,
+            record.events.clone(),
+        )
         .await?;
     Ok(WalkOutcome::Completed {
         flow_instance: flow_instance.to_owned(),
@@ -434,6 +471,7 @@ async fn advance(
             record.instance.clone(),
             record.armed.clone(),
             sealed,
+            record.events.clone(),
         )
         .await?;
     Ok(updated)
@@ -487,7 +525,14 @@ async fn fail(state: &FlowServiceState, flow_instance: &str, version: u64) {
     }
     let _ = state
         .store
-        .update(flow_instance, version, instance, None, Vec::new())
+        .update(
+            flow_instance,
+            version,
+            instance,
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
         .await;
 }
 
