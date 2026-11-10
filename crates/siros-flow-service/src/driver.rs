@@ -304,7 +304,36 @@ async fn walk(
                     }
                     literal => literal.clone(),
                 };
-                context.derived.insert(store_step.key.clone(), value);
+                // The value lands under the STEP ID (§5.5's one
+                // addressing discipline — later steps reference it as
+                // {step: <id>, path: [...]}).
+                context.derived.insert(store_step.id.clone(), value);
+                record = advance(state, record, definition, flow_instance, &mut context).await?;
+            }
+            Step::Token(token_step) => {
+                // The plugin is the reviewed code (§6.7): the flow
+                // references it by name, the registry resolves it
+                // (allowlisted at load, fail-closed again here).
+                let plugin = state.token_registry.resolve(&token_step.plugin)?;
+                plugin.validate_params(&token_step.params)?;
+                // The verified claims land in the context's derived
+                // values under the step id (§5.5).
+                let claims = plugin.verify(&context, &token_step.params)?;
+                context.derived.insert(token_step.id.clone(), claims);
+                record = advance(state, record, definition, flow_instance, &mut context).await?;
+            }
+            Step::Fetch(fetch_step) => {
+                let plugin = state.fetch_registry.resolve(&fetch_step.plugin)?;
+                // Exactly the step's DECLARED inputs are resolved and
+                // sent (surface-checked at load, §6.5: nothing else
+                // leaves the context).
+                let mut inputs = std::collections::BTreeMap::new();
+                for (name, reference) in &fetch_step.inputs {
+                    inputs.insert(name.clone(), context.resolve(reference)?);
+                }
+                // Fail-closed: a failed fetch fails the step (§6.5).
+                let value = plugin.fetch(inputs).await?;
+                context.derived.insert(fetch_step.id.clone(), value);
                 record = advance(state, record, definition, flow_instance, &mut context).await?;
             }
             Step::End => {

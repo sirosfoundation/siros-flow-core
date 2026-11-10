@@ -291,6 +291,8 @@ async fn spawn_flow(
         default_carrier: siros_flow_core::language::Carrier::Deeplink,
         retention_after_final_seconds: 3_600,
         bind_registry: BindRegistry::standard(),
+        token_registry: siros_flow_service::plugins::TokenRegistry::new(),
+        fetch_registry: siros_flow_service::plugins::FetchRegistry::new(),
     });
     let app = siros_flow_service::http::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

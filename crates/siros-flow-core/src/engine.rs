@@ -191,6 +191,8 @@ pub fn step_id(step: &crate::language::Step) -> Option<&str> {
         crate::language::Step::Bind(b) => Some(&b.id),
         crate::language::Step::Issuance(i) => Some(&i.id),
         crate::language::Step::Store(s) => Some(&s.id),
+        crate::language::Step::Token(t) => Some(&t.id),
+        crate::language::Step::Fetch(f) => Some(&f.id),
         crate::language::Step::End => None,
     }
 }

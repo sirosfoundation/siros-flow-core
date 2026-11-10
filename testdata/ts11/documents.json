@@ -338,5 +338,68 @@
         }
       ]
     }
+  },
+  {
+    "format": "dc+sd-jwt",
+    "uri": "http://127.0.0.1:9/schemas/staff/vctm.json",
+    "body": {
+      "vct": "urn:ewb:staff:1",
+      "display": [
+        {
+          "name": "Staff Attestation (WE BUILD)",
+          "locale": "en"
+        }
+      ],
+      "claims": [
+        {
+          "path": [
+            "given_name"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Given name",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "family_name"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Family name",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "employee_id"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Employee id",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "department"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Department",
+              "locale": "en"
+            }
+          ]
+        }
+      ]
+    }
   }
 ]

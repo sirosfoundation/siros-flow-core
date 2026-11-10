@@ -47,6 +47,13 @@ pub struct FlowServiceState {
     /// against: the standard set (same-key + the reference plugins);
     /// a deployment adds its own on the same trait.
     pub bind_registry: siros_flow_core::bind::BindRegistry,
+    /// The deployment's token-plugin allowlist (§6.7): the names
+    /// `token` steps may reference; anything else is a load refusal.
+    pub token_registry: crate::plugins::TokenRegistry,
+    /// The deployment's fetch-provider allowlist (§6.7): the names
+    /// `fetch` steps may reference, each declaring its input
+    /// surface (§6.5).
+    pub fetch_registry: crate::plugins::FetchRegistry,
 }
 
 impl FlowServiceState {

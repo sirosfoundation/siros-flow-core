@@ -92,20 +92,37 @@ impl FlowContext {
                 reference.render()
             )));
         };
-        let Some(result) = self.presentations.get(step) else {
-            return Err(crate::Error::context_unresolved(format!(
-                "step {step:?} has no presentation result yet — steps run in order (§5.2)"
-            )));
-        };
-        let credential = match &reference.credential {
-            Some(credential) => result.credential(credential).ok_or_else(|| {
-                crate::Error::context_unresolved(format!(
-                    "step {step:?} presented no credential {credential:?}"
-                ))
-            })?,
-            None => return Ok(result_to_value(result, &reference.path)),
-        };
-        lookup_claim_path(&credential.claims, &reference.path, &credential.format)
+        // A presentation step: the ref may name the whole result, one
+        // credential's claims, or a claim path within them.
+        if let Some(result) = self.presentations.get(step) {
+            let credential = match &reference.credential {
+                Some(credential) => result.credential(credential).ok_or_else(|| {
+                    crate::Error::context_unresolved(format!(
+                        "step {step:?} presented no credential {credential:?}"
+                    ))
+                })?,
+                None => return Ok(result_to_value(result, &reference.path)),
+            };
+            return lookup_claim_path(&credential.claims, &reference.path, &credential.format);
+        }
+        // A derived value (§5.5: the store/token/fetch step's output,
+        // keyed by step id): the path walks the value. A credential
+        // member on a derived ref is a definition error — derived
+        // values are not presentations.
+        if let Some(value) = self.derived.get(step) {
+            if let Some(credential) = &reference.credential {
+                return Err(crate::Error::context_unresolved(format!(
+                    "{} names credential {credential:?}, but step {step:?} is a derived \
+                     value, not a presentation",
+                    reference.render()
+                )));
+            }
+            return walk_path(value, &reference.path, &reference.render());
+        }
+        Err(crate::Error::context_unresolved(format!(
+            "step {step:?} has neither a presentation result nor a derived value yet — \
+             steps run in order (§5.2)"
+        )))
     }
 }
 

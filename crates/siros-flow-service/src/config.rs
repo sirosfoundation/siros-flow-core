@@ -22,6 +22,10 @@ pub struct Config {
     /// external issuer's backend.
     #[serde(default)]
     pub embedded: Option<EmbeddedIssuerCfg>,
+    /// The deployment's plugin allowlist (§6.7): token-verification
+    /// plugins and fetch providers, by name.
+    #[serde(default)]
+    pub plugins: PluginsCfg,
     #[serde(default)]
     pub pdp: Option<Url>,
     /// The presentation TTL: how long an armed OID4VP request may wait
@@ -31,6 +35,71 @@ pub struct Config {
     /// Flow instance retention after expiry (the sweep, §10).
     #[serde(default = "default_retention")]
     pub retention_after_final_seconds: i64,
+}
+
+/// The deployment's plugin allowlist (§6.7).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct PluginsCfg {
+    /// `[[plugins.token]]`: one token-verification plugin per stanza
+    /// (§6.4) — the name a definition's `token` step references.
+    #[serde(default)]
+    pub token: Vec<TokenPluginCfg>,
+    /// `[[plugins.fetch]]`: one fetch provider per stanza (§6.5) —
+    /// the name a definition's `fetch` step references, with the
+    /// provider's input surface (the PII-flow audit).
+    #[serde(default)]
+    pub fetch: Vec<FetchPluginCfg>,
+}
+
+/// One `[[plugins.token]]` stanza (the reference plugin's config).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenPluginCfg {
+    /// The name definitions reference (`plugin: <name>`).
+    pub name: String,
+    /// The asserting party's public key file — the family's shapes
+    /// (PKCS#8 EC P-256 PEM or JWK JSON).
+    pub key_path: String,
+    /// The expected `iss`.
+    pub issuer: String,
+    /// The expected `aud`.
+    pub audience: String,
+    /// Clock-skew leeway on the freshness windows.
+    #[serde(default = "default_leeway_seconds")]
+    pub leeway_seconds: i64,
+}
+
+fn default_leeway_seconds() -> i64 {
+    60
+}
+
+/// One `[[plugins.fetch]]` stanza (the reference provider's config).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FetchPluginCfg {
+    /// The name definitions reference (`plugin: <name>`).
+    pub name: String,
+    /// The endpoint the declared inputs POST to.
+    pub url: String,
+    /// The request timeout.
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+    /// The response-size budget.
+    #[serde(default = "default_max_response_bytes")]
+    pub max_response_bytes: usize,
+    /// The provider's INPUT SURFACE: the context input names it may
+    /// be sent (§6.5 — a fetch step declaring anything else refuses
+    /// at load). Empty = no subject data out.
+    #[serde(default)]
+    pub inputs: Vec<String>,
+}
+
+fn default_timeout_ms() -> u64 {
+    5_000
+}
+
+fn default_max_response_bytes() -> usize {
+    65_536
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]

@@ -25,6 +25,9 @@ pub mod code {
     /// A bind step names a primitive that is neither a built-in nor an
     /// allowlisted plugin (the plugin-allowlist discipline).
     pub const BIND_UNKNOWN_PRIMITIVE: &str = "bind_unknown_primitive";
+    /// A flow definition referenced a plugin (`token`/`fetch`) that is
+    /// not in the deployment's allowlist (§6.7) — a load refusal.
+    pub const PLUGIN_UNKNOWN: &str = "plugin_unknown";
     /// A context reference does not resolve (unknown step id, unknown
     /// credential id, absent claim path) — a refusal, never a skip:
     /// a primitive that cannot resolve declares mismatch or errors,

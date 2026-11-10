@@ -49,6 +49,10 @@ pub enum Step {
     Bind(BindStep),
     Issuance(IssuanceStep),
     Store(StoreStep),
+    /// A JWT-shaped token verified by a named plugin (§6.4).
+    Token(TokenStep),
+    /// An external API called through a named provider plugin (§6.5).
+    Fetch(FetchStep),
     /// Early flow-stop (goFF/pyFF `end`). No parameters.
     End,
 }
@@ -228,10 +232,55 @@ impl ContextRef {
 #[serde(deny_unknown_fields)]
 pub struct StoreStep {
     pub id: String,
-    /// The key the value is written under.
-    pub key: String,
-    /// The value: a context ref (copy) or a literal.
+    /// The value: a context ref (copy) or a literal. It lands in the
+    /// context's derived values under the STEP ID (§5.5) — the one
+    /// addressing discipline: later steps reference it as
+    /// `{step: <id>, path: [...]}`.
     pub value: serde_json::Value,
+}
+
+/// One `token` step (§6.4): a JWT-shaped token — an OIDC ID token,
+/// an RFC 7523 assertion, an enterprise IdP's JWT — verified by a
+/// named plugin. The token arrives as a flow input (the integrator
+/// that runs a SAML SP asserts its user the way issuer-core Mode A
+/// allows; flow-core parses no XML); the plugin is the reviewed code
+/// — signature, audience, freshness windows (the checks
+/// `verify_private_key_jwt` performs in issuer-core, generalized) —
+/// and the flow references it by name. Its verified claims land in
+/// the context's derived values under the step id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenStep {
+    pub id: String,
+    /// The plugin's name — must be in the deployment's allowlist or
+    /// the definition refuses to load (§6.7).
+    pub plugin: String,
+    /// The plugin's parameters (validated by the plugin at load —
+    /// the bind vocabulary's `validate_params` discipline).
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+/// One `fetch` step (§6.5): an external API called through a
+/// config-selected provider plugin. The step declares the context
+/// inputs it MAY be sent; every declared name is checked against the
+/// provider's configured input surface at LOAD (the PII-flow audit:
+/// a definition routing undeclared subject data to a provider never
+/// runs). The fetched value lands in the context's derived values
+/// under the step id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FetchStep {
+    pub id: String,
+    /// The provider's name — must be in the deployment's allowlist
+    /// or the definition refuses to load (§6.7).
+    pub plugin: String,
+    /// The inputs this step may send: input name → context ref. Every
+    /// name must be in the provider's configured input surface (§6.5,
+    /// checked at load); at runtime exactly these are resolved and
+    /// sent, nothing else.
+    #[serde(default)]
+    pub inputs: BTreeMap<String, ContextRef>,
 }
 
 // ─── Load + validate + digest ──────────────────────────────────────────────
@@ -307,13 +356,27 @@ impl FlowDefinition {
                 }
                 Step::Store(store) => {
                     validate_step_id(&store.id, index, "store")?;
-                    if store.key.trim().is_empty() {
+                    store.id.as_str()
+                }
+                Step::Token(token) => {
+                    validate_step_id(&token.id, index, "token")?;
+                    if token.plugin.trim().is_empty() {
                         return Err(Error::language_invalid(format!(
-                            "step {index} (store {:?}): an empty context key",
-                            store.id
+                            "step {index} (token {:?}): an empty plugin name",
+                            token.id
                         )));
                     }
-                    store.id.as_str()
+                    token.id.as_str()
+                }
+                Step::Fetch(fetch) => {
+                    validate_step_id(&fetch.id, index, "fetch")?;
+                    if fetch.plugin.trim().is_empty() {
+                        return Err(Error::language_invalid(format!(
+                            "step {index} (fetch {:?}): an empty plugin name",
+                            fetch.id
+                        )));
+                    }
+                    fetch.id.as_str()
                 }
                 Step::End => "",
             };

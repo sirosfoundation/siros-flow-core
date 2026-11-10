@@ -970,6 +970,28 @@ Carried up from issuer-core, unchanged in spirit:
   the walk; the redirect flow's audience (`client_id`) is refused —
   a DC API response cannot be replayed into a redirect context and
   vice versa. **P-bw2 is closed.**
+- **P-bw3 (2026-11-10):** the `token` and `fetch` step kinds over the
+  plugin surface (§6.7), with the reference `id-token` plugin (the
+  issuer-core `verify_bearer_assertion` checks generalized:
+  signature/`iss`/`aud`/freshness, each refusal tested) and the
+  reference `http-json` provider (bounded, fail-closed, its input
+  surface from config). The exit criteria, tested: **the allowlist
+  enforcement is a load refusal** (`plugin_unknown`; the service runs
+  the same gate for every definition at startup) and **the fetch
+  input-surface audit refuses at load** — a definition routing
+  undeclared subject data to a provider never runs. Derived values
+  are reachable by refs (§5.5's addressing closes: outputs key by
+  step id; refs name them `{step, path}`). §2.1 flow 4
+  (token-sourced attestation: integrator-asserted identity + PID
+  presentation) end-to-end: the token's claims feed the bind
+  (claim-equals on names, labelled probabilistic, its left side a
+  derived ref) and the merged subject (employee_id/department from
+  the token; the PID's identity); the wrong asserted person refuses
+  at the comparison; the fetch variant proves the
+  declared-inputs discipline end-to-end (`token_fetch_e2e.rs`,
+  `plugins.rs`). Flow 4's definition ships in `flows/` when a
+  deployment wires its asserting party's plugin — the shipped set
+  stays deployable without plugin config.
 
 ## 14. Open questions (the iteration list)
 

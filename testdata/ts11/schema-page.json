@@ -95,9 +95,25 @@
           "uri": "http://127.0.0.1:9/schemas/sca/vctm.json"
         }
       ]
+    },
+    {
+      "id": "urn:ewb:staff:1",
+      "version": "1.0",
+      "rulebookURI": "https://registry.siros.org/rulebooks/staff",
+      "attestationLoS": "iso_18045_high",
+      "bindingType": "key",
+      "supportedFormats": [
+        "dc+sd-jwt"
+      ],
+      "schemaURIs": [
+        {
+          "formatIdentifier": "dc+sd-jwt",
+          "uri": "http://127.0.0.1:9/schemas/staff/vctm.json"
+        }
+      ]
     }
   ],
-  "total": 6,
-  "limit": 6,
+  "total": 7,
+  "limit": 7,
   "offset": 0
 }

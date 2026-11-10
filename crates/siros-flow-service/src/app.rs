@@ -74,8 +74,23 @@ pub async fn build(config: &Config) -> Result<App> {
     // parameter validation HERE — an unknown primitive or malformed
     // params refuse startup (a load refusal), never a mid-flow walk.
     let bind_registry = BindRegistry::standard();
+    // The plugin allowlist (§6.7): token plugins and fetch providers
+    // built from config — reviewed code, registered by name.
+    let mut token_registry = crate::plugins::TokenRegistry::new();
+    for plugin_cfg in &config.plugins.token {
+        token_registry = token_registry.with(Box::new(crate::plugins::IdTokenPlugin::from_config(
+            plugin_cfg,
+        )?));
+    }
+    let mut fetch_registry = crate::plugins::FetchRegistry::new();
+    for plugin_cfg in &config.plugins.fetch {
+        fetch_registry = fetch_registry.with(Box::new(
+            crate::plugins::HttpJsonPlugin::from_config(plugin_cfg)?,
+        ));
+    }
     for definition in definitions.values() {
         siros_flow_core::bind::validate_definition(definition, &bind_registry)?;
+        crate::plugins::validate_definition(definition, &token_registry, &fetch_registry)?;
     }
 
     let public_url = Url::parse(
@@ -198,6 +213,8 @@ pub async fn build(config: &Config) -> Result<App> {
             .unwrap_or(siros_flow_core::language::Carrier::Deeplink),
         retention_after_final_seconds: config.retention_after_final_seconds,
         bind_registry,
+        token_registry,
+        fetch_registry,
     });
 
     // The embedded merge: the issuer's own /healthz serves the
@@ -218,43 +235,6 @@ type VerifierSigning = (Arc<dyn siros_issuer_core::signer::Signer>, Vec<Vec<u8>>
 
 /// Load a PKCS#8 EC P-256 PEM into the JWK the signer wants (the
 /// family's key shape — create-pki.sh's verifier-style private key).
-fn load_pkcs8_pem(path: &str) -> Result<jose_rs::jwk::Jwk> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| Error::configuration(format!("reading {path}: {e}")))?;
-    let blocks: Vec<pem::Pem> =
-        pem::parse_many(&text).map_err(|e| Error::configuration(format!("parsing {path}: {e}")))?;
-    let der = blocks
-        .iter()
-        .find(|block| block.tag() == "PRIVATE KEY")
-        .map(|block| block.contents().to_vec())
-        .ok_or_else(|| Error::configuration(format!("{path}: no PRIVATE KEY block")))?;
-    let secret: p256::SecretKey = p256::pkcs8::DecodePrivateKey::from_pkcs8_der(&der)
-        .map_err(|e| Error::configuration(format!("{path}: {e}")))?;
-    let public = secret.public_key();
-    use p256::elliptic_curve::sec1::ToSec1Point as _;
-    let point = public.to_sec1_point(false);
-    let bytes = point.as_bytes();
-    let scalar = secret.to_bytes();
-    let jwk: jose_rs::jwk::Jwk = serde_json::from_value(serde_json::json!({
-        "kty": "EC",
-        "crv": "P-256",
-        "x": siros_issuer_core::sdjwt_issue::b64u(&bytes[1..33]),
-        "y": siros_issuer_core::sdjwt_issue::b64u(&bytes[33..]),
-        "d": siros_issuer_core::sdjwt_issue::b64u(scalar.as_slice()),
-        "alg": "ES256",
-        "use": "sig",
-    }))
-    .map_err(|e| Error::configuration(format!("the loaded jwk: {e}")))?;
-    let mut jwk = jwk;
-    if jwk.kid.is_none() {
-        jwk.kid = Some(
-            siros_issuer_service::auth::thumbprint(&jwk)
-                .map_err(|e| Error::configuration(e.to_string()))?,
-        );
-    }
-    Ok(jwk)
-}
-
 /// A PEM certificate chain (leaf first) → DER vectors.
 fn pem_chain_to_der(path: &str) -> Result<Vec<Vec<u8>>> {
     let pem = std::fs::read_to_string(path)
@@ -298,7 +278,7 @@ fn verifier_signing(config: &Config) -> Result<VerifierSigning> {
         (None, Some(path)) => {
             // The family's PKCS#8 EC P-256 PEM (create-pki.sh's shape)
             // — loaded into the same JWK.
-            let jwk = load_pkcs8_pem(path)?;
+            let jwk = crate::keys::load_key_file(path)?;
             Arc::new(
                 siros_issuer_core::signer::JwkSigner::new(jwk)
                     .map_err(|e| Error::configuration(e.to_string()))?,
@@ -361,16 +341,7 @@ async fn build_embedded_issuer(
     // the family's PKCS#8 PEM (create-pki.sh's shape) or JWK JSON —
     // detected by the PEM header.
     let mut jwk = match &config.signing.jwk_path {
-        Some(path) => {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| Error::configuration(format!("reading {}: {e}", path.display())))?;
-            if text.trim_start().starts_with("-----BEGIN") {
-                load_pkcs8_pem(&path.display().to_string())?
-            } else {
-                serde_json::from_str::<jose_rs::jwk::Jwk>(&text)
-                    .map_err(|e| Error::configuration(format!("parsing {}: {e}", path.display())))?
-            }
-        }
+        Some(path) => crate::keys::load_key_file(&path.display().to_string())?,
         None => {
             eprintln!(
                 "siros-flow-service: the embedded issuer has no signing.jwk_path: an ephemeral dev key signs its credentials; development only"
@@ -447,17 +418,10 @@ async fn build_embedded_issuer(
         .clone()
         .unwrap_or_else(|| "https://flow.siros.org/".to_owned());
     if let Some(key_path) = &flow_config.issuer.integrator_key_path {
-        let text = std::fs::read_to_string(key_path)
-            .map_err(|e| Error::configuration(format!("reading {key_path}: {e}")))?;
         // The family's key shape accepted: PKCS#8 EC P-256 PEM (detected
-        // by the header) or JWK JSON — the same shapes the issuer client
-        // and the verifier signing loader take.
-        let jwk: jose_rs::jwk::Jwk = if text.trim_start().starts_with("-----BEGIN") {
-            load_pkcs8_pem(key_path)?
-        } else {
-            serde_json::from_str::<jose_rs::jwk::Jwk>(&text)
-                .map_err(|e| Error::configuration(format!("parsing {key_path}: {e}")))?
-        };
+        // by the header) or JWK JSON — one loader, the same shapes the
+        // verifier signing and token-plugin configs take.
+        let jwk: jose_rs::jwk::Jwk = crate::keys::load_key_file(key_path)?;
         let public = jwk.to_public_jwk();
         let jwk_value = serde_json::to_value(&public)
             .map_err(|e| Error::configuration(format!("the integrator key: {e}")))?;

@@ -137,6 +137,36 @@ fn an_empty_flow_name_refuses_and_the_name_grammar_holds() {
 }
 
 #[test]
+fn token_and_fetch_steps_parse_with_plugin_names() {
+    // §6.4: a token step names its plugin and the input carrying the
+    // JWT; the plugin validates the params at load (service-side).
+    let definition = FlowDefinition::from_yaml(
+        "flow: token-smoke\nlanguage_version: 1\nsteps:\n  - token:\n      id: consume-idp\n      plugin: test-idp\n      params:\n        token: {input: idp_assertion}\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Token(token) = &definition.steps[0] else {
+        panic!("the first step is the token step");
+    };
+    assert_eq!(token.plugin, "test-idp");
+    assert_eq!(
+        token.params["token"]["input"], "idp_assertion",
+        "the params carry the token reference verbatim (the plugin validates)"
+    );
+
+    // §6.5: a fetch step names its provider and declares the inputs
+    // it may send (surface-checked at load, service-side).
+    let definition = FlowDefinition::from_yaml(
+        "flow: fetch-smoke\nlanguage_version: 1\nsteps:\n  - fetch:\n      id: employee-record\n      plugin: hr-api\n      inputs:\n        family_name: {step: present-pid, credential: pid, path: [family_name]}\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Fetch(fetch) = &definition.steps[0] else {
+        panic!("the first step is the fetch step");
+    };
+    assert_eq!(fetch.plugin, "hr-api");
+    assert!(fetch.inputs.contains_key("family_name"));
+}
+
+#[test]
 fn the_carrier_vocabulary_is_closed() {
     // `dc_api` parses (the step names its carrier, §7)...
     let definition = FlowDefinition::from_yaml(
@@ -179,7 +209,7 @@ fn the_carrier_vocabulary_is_closed() {
 #[test]
 fn duplicate_step_ids_refuse_at_load() {
     let error = FlowDefinition::from_yaml(
-        "flow: dup\nlanguage_version: 1\nsteps:\n  - presentation: {id: same, request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]}\n  - store: {id: same, key: k, value: v}\n",
+        "flow: dup\nlanguage_version: 1\nsteps:\n  - presentation: {id: same, request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]}\n  - store: {id: same, value: v}\n",
     )
     .unwrap_err();
     assert_eq!(error.code, "flow_language_invalid");
