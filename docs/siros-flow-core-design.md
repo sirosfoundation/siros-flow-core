@@ -993,7 +993,18 @@ Carried up from issuer-core, unchanged in spirit:
   engine (integration 12) expects the client to return
   `response_jwe`, the frontend signs plainly, and gdc.yaml documents
   exactly this "BREAKING for clients … until the SDKs land" state.
-  The go-wallet-backend WIP (engine-side JARM encryption) closes it.
+  The precise blockers, identified by the drill: no backend
+  redeploy closes it — the engine (main 1cc28310 and gdc's
+  integration 12 alike) sends response_encryption in the sign
+  request and REQUIRES the client to return response_jwe ("the
+  engine never holds the vp_token", oid4vp.go:2053) — while every
+  RELEASED frontend's signPresentation returns { vpToken } alone
+  (no JWE path). The closing piece is the wallet-frontend's
+  client-held response encryption — UNMERGED
+  (feat/client-held-response-encryption @ edcacb9dd; no tag
+  contains it, 0.6.0 does not) — plus the backend's client-auth
+  WIP line. Re-pin gdc's frontend when the branch lands; the drill
+  spec is the standing re-run.
   The drill therefore stops one hop short of the PDP permit — the
   hop is the wallet pair's, not flow-core's, and the scripted live
   round trip (live_gdc.rs) already proves the PDP permit path with
