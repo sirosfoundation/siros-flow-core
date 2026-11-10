@@ -50,6 +50,49 @@ async fn insert_update_and_the_version_cas() {
 }
 
 #[tokio::test]
+async fn the_request_object_peeks_without_claiming() {
+    // The wallet may fetch the request object repeatedly (§8.6): the
+    // peek is read-only — the claim stays take_by_handle's
+    // single-use discipline.
+    let store = MemoryFlowStore::new();
+    let mut record = FlowRecord::new("peek".to_owned(), instance("peek"), vec![7, 7, 7]);
+    record.armed = Some(ArmedStep {
+        handle: "fr_peekhandle".to_owned(),
+        step_id: "p".to_owned(),
+        sealed_step: vec![9, 9],
+        jar: "the public request object".to_owned(),
+    });
+    store.insert(record).await.unwrap();
+
+    // Repeated peeks: the same object, the arm still armed.
+    for _ in 0..3 {
+        assert_eq!(
+            store
+                .peek_request_object("fr_peekhandle")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("the public request object")
+        );
+    }
+    // An unknown handle peeks nothing.
+    assert_eq!(store.peek_request_object("fr_nope").await.unwrap(), None);
+    // The claim still works after the peeks.
+    let taken = store.take_by_handle("fr_peekhandle").await.unwrap();
+    assert!(taken.is_some());
+    // And the arm is cleared: neither a peek nor a second take finds it.
+    assert_eq!(
+        store.peek_request_object("fr_peekhandle").await.unwrap(),
+        None
+    );
+    assert!(store
+        .take_by_handle("fr_peekhandle")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn the_handle_index_arms_finds_and_takes_single_use() {
     let store = MemoryFlowStore::new();
     let mut record = FlowRecord::new("handles".to_owned(), instance("handles"), vec![7, 7, 7]);
@@ -57,6 +100,7 @@ async fn the_handle_index_arms_finds_and_takes_single_use() {
         handle: "fr_testhandle".to_owned(),
         step_id: "p".to_owned(),
         sealed_step: vec![9, 9],
+        jar: "the public request object".to_owned(),
     });
     store.insert(record).await.unwrap();
 

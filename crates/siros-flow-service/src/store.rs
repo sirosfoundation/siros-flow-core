@@ -19,6 +19,12 @@ pub struct ArmedStep {
     pub step_id: String,
     /// The step's sealed verifier-side state (the OID4VP session).
     pub sealed_step: Vec<u8>,
+    /// The signed request object (the JAR), CLEAR — it is public by
+    /// design (the wallet reads it; the x5c is meant to be seen),
+    /// served at `request-object/{handle}` for the request-by-
+    /// reference wallets (a real wallet fetches the request from a
+    /// URL; only a custom driver consumes it by value).
+    pub jar: String,
 }
 
 /// The stored flow record: the clear/sealed split (§5.5). In the
@@ -75,6 +81,10 @@ pub trait FlowStore: Send + Sync {
     /// Claim the armed step by handle (single-use, atomic): the arm
     /// clears under the lock; a second take misses.
     async fn take_by_handle(&self, handle: &str) -> Result<Option<FlowRecord>>;
+    /// The armed step's public request object, by handle — a PEEK, not
+    /// a claim: a wallet may fetch the request repeatedly, and
+    /// claiming stays `take_by_handle`'s single-use discipline.
+    async fn peek_request_object(&self, handle: &str) -> Result<Option<String>>;
     /// The retention sweep (§10): expire past-TTL instances, purge
     /// sealed data past retention.
     async fn sweep(&self, now_unix: i64, retention_after_final_secs: i64) -> Result<()>;
@@ -178,6 +188,25 @@ impl FlowStore for MemoryFlowStore {
             }
         }
         Ok(Some(snapshot))
+    }
+
+    async fn peek_request_object(&self, handle: &str) -> Result<Option<String>> {
+        // A read-only peek: no claim, no version bump — the wallet
+        // may fetch the request object repeatedly (§8.6: claiming is
+        // take_by_handle's single-use discipline, nothing else).
+        let handles = self.by_handle.read().map_err(|_| poisoned())?;
+        let records = self.records.read().map_err(|_| poisoned())?;
+        let Some(flow_instance) = handles.get(handle) else {
+            return Ok(None);
+        };
+        let Some(record) = records.get(flow_instance) else {
+            return Ok(None);
+        };
+        Ok(record
+            .armed
+            .as_ref()
+            .filter(|armed| armed.handle == handle)
+            .map(|armed| armed.jar.clone()))
     }
 
     async fn sweep(&self, now_unix: i64, retention_after_final_secs: i64) -> Result<()> {

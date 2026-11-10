@@ -31,6 +31,15 @@ pub struct AwaitingPresentation {
     pub jar: String,
     /// Where the wallet POSTs the `direct_post.jwt` response.
     pub response_uri: String,
+    /// The request object served for the request-by-reference wallets
+    /// (a real wallet fetches the JAR from a URL — only a custom
+    /// driver consumes it by value).
+    pub request_uri: String,
+    /// The deep link a wallet opens: `openid4vp://?client_id=…&
+    /// request_uri=…` (the OID4VP authorization request shape —
+    /// §6.1: the carrier decides how the request reaches the
+    /// wallet, and a deep link / QR carries a request_uri).
+    pub deep_link: String,
     /// The carrier this step rides ("deeplink" | "dc_api") — the reply
     /// envelope carries it; a front-end branches on it (open a URI
     /// vs `credentials.get`), §7.
@@ -192,6 +201,25 @@ pub async fn resume_flow(
 
 /// The walk: run steps in definition order from the cursor until a
 /// presentation arms (park) or the definition ends (complete). A
+/// The signed request object's own `client_id` (the x509_hash
+/// scheme id a deep link carries — the same one the wallet parses
+/// from the fetched request).
+fn jar_client_id(jar: &str) -> Result<String> {
+    let payload = jar
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| Error::configuration("the request object is not a compact JWT"))?;
+    let claims: serde_json::Value = serde_json::from_slice(
+        &siros_issuer_core::sdjwt_issue::b64u_decode(payload)
+            .map_err(|e| Error::configuration(format!("the request object: {e}")))?,
+    )
+    .map_err(|e| Error::configuration(format!("the request object: {e}")))?;
+    claims["client_id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| Error::configuration("the request object has no client_id"))
+}
+
 /// failing bind (on_mismatch: fail, the default) persists the Failed
 /// state before surfacing the refusal.
 async fn walk(
@@ -231,14 +259,34 @@ async fn walk(
                             handle: armed.handle.clone(),
                             step_id: presentation.id.clone(),
                             sealed_step: armed.sealed_session,
+                            jar: armed.jar.clone(),
                         }),
                         sealed,
                     )
                     .await?;
+                // The wallet-facing URL shapes: the request object is
+                // served at request-object/{handle} (request-by-
+                // reference), and the deep link carries client_id +
+                // request_uri (the OID4VP authorization request a
+                // wallet opens — the client_id is the request
+                // object's own, the x509_hash scheme).
+                let request_uri = state
+                    .public_url
+                    .join(&format!("request-object/{}", armed.handle))
+                    .map_err(|e| Error::configuration(format!("public_url: {e}")))?
+                    .to_string();
+                let client_id = jar_client_id(&armed.jar)?;
+                let deep_link = format!(
+                    "openid4vp://?client_id={}&request_uri={}",
+                    urlencoding::encode(&client_id),
+                    urlencoding::encode(&request_uri),
+                );
                 return Ok(WalkOutcome::Parked(AwaitingPresentation {
                     flow_instance: flow_instance.to_owned(),
                     jar: armed.jar,
                     response_uri: armed.response_uri.as_str().to_owned(),
+                    request_uri,
+                    deep_link,
                     carrier: armed.carrier,
                 }));
             }

@@ -31,10 +31,10 @@ futures-util = "0.3"
 kryptering = { workspace = true }
 p256 = { workspace = true }
 getrandom = { workspace = true }
+urlencoding = { workspace = true }
 
 [dev-dependencies]
 siros-verifier-core = { workspace = true, features = ["testutil"] }
 futures-util = "0.3"
 rcgen = { workspace = true }
 rustls-pki-types = { workspace = true }
-urlencoding = { workspace = true }

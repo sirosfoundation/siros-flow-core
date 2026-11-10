@@ -391,6 +391,79 @@ async fn the_pid_to_ehic_flow_runs_definition_driven_end_to_end() {
     let instance = start["instance"].as_str().unwrap().to_owned();
     assert!(instance.starts_with("ehic-pid-presentation_"));
 
+    // 1a. The request-by-reference shapes a real wallet consumes
+    //     (§6.1: the deep-link carrier carries a request_uri): the
+    //     JAR is served at request_uri (peek — a wallet may fetch it
+    //     repeatedly), and the deep link opens
+    //     openid4vp://?client_id=…&request_uri=… with the request
+    //     object's own client_id (the x509_hash scheme id).
+    // The configured public URL builds the request_uri (the one-URL
+    // rule) — rewritten to the spawned port for the wallet leg, the
+    // same convention the response_uri uses.
+    let request_uri = start["request_uri"]
+        .as_str()
+        .unwrap()
+        .replace(ISSUER_BASE, flow_url.trim_end_matches('/'));
+    let fetched = client.get(&request_uri).send().await.unwrap();
+    assert_eq!(fetched.status(), 200);
+    assert_eq!(
+        fetched.headers()["content-type"],
+        "application/oauth-authz-req+jwt",
+        "the OID4VP request-object media type"
+    );
+    assert_eq!(
+        fetched.headers()["access-control-allow-origin"],
+        "*",
+        "the wallet fetches the request cross-origin (vc's CORS discipline)"
+    );
+    assert_eq!(
+        fetched.text().await.unwrap(),
+        jar,
+        "the same request object"
+    );
+    // Repeated fetches are fine (peek, not claim).
+    assert_eq!(client.get(&request_uri).send().await.unwrap().status(), 200);
+
+    let deep_link = start["deep_link"].as_str().unwrap().to_owned();
+    assert!(deep_link.starts_with("openid4vp://?"), "{deep_link}");
+    let deep: std::collections::BTreeMap<String, String> = deep_link
+        .trim_start_matches("openid4vp://?")
+        .split('&')
+        .map(|pair| {
+            pair.split_once('=')
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                .unwrap()
+        })
+        .map(|(k, v)| {
+            (
+                k,
+                urlencoding::decode(&v).map(|v| v.to_string()).unwrap_or(v),
+            )
+        })
+        .collect();
+    let jar_payload: Value = serde_json::from_slice(
+        &siros_issuer_core::sdjwt_issue::b64u_decode(jar.split('.').nth(1).unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        deep["client_id"],
+        jar_payload["client_id"].as_str().unwrap(),
+        "the deep link carries the request object's own client_id"
+    );
+    assert_eq!(
+        deep["request_uri"].as_str(),
+        start["request_uri"].as_str().unwrap(),
+        "the deep link carries the request_uri"
+    );
+    // A bogus handle finds no request object (and the claim was not
+    // consumed by the peeks: the flow still completes below).
+    let bogus = client
+        .get(format!("{flow_url}/request-object/fr_nope"))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(bogus.status(), 200);
+
     // 2. The wallet reads the request object: nonce, state, client_id,
     //    the ephemeral encryption key, the response_uri (rewritten to
     //    the spawned flow service's real port).
