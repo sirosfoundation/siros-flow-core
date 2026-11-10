@@ -13,6 +13,12 @@
       "claims": [
         {
           "path": [
+            "id"
+          ],
+          "mandatory": false
+        },
+        {
+          "path": [
             "given_name"
           ],
           "mandatory": true,
@@ -227,6 +233,108 @@
             "birthdate"
           ],
           "mandatory": false
+        }
+      ]
+    }
+  },
+  {
+    "format": "dc+sd-jwt",
+    "uri": "http://127.0.0.1:9/schemas/poa/vctm.json",
+    "body": {
+      "vct": "urn:ewb:poa:1",
+      "display": [
+        {
+          "name": "Power of Attorney (WE BUILD)",
+          "locale": "en"
+        }
+      ],
+      "claims": [
+        {
+          "path": [
+            "attorney_full_name"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Attorney (full name)",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "company_statutory_full_name"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Company (statutory full name)",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "scope_of_representation"
+          ],
+          "mandatory": false,
+          "display": [
+            {
+              "name": "Scope of representation",
+              "locale": "en"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "format": "dc+sd-jwt",
+    "uri": "http://127.0.0.1:9/schemas/sca/vctm.json",
+    "body": {
+      "vct": "urn:ewb:sca:1",
+      "display": [
+        {
+          "name": "Company-bound Signing Credential (WE BUILD)",
+          "locale": "en"
+        }
+      ],
+      "claims": [
+        {
+          "path": [
+            "given_name"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Given name",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "family_name"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Family name",
+              "locale": "en"
+            }
+          ]
+        },
+        {
+          "path": [
+            "company"
+          ],
+          "mandatory": true,
+          "display": [
+            {
+              "name": "Company",
+              "locale": "en"
+            }
+          ]
         }
       ]
     }

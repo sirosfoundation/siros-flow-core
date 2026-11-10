@@ -69,6 +69,15 @@ pub async fn build(config: &Config) -> Result<App> {
         .unwrap_or_else(|| "flows".to_owned());
     let definitions = FlowServiceState::load_definitions(&definitions_dir)?;
 
+    // The plugin-allowlist discipline (§8.3): every definition's bind
+    // steps resolve against the registry and pass their primitive's
+    // parameter validation HERE — an unknown primitive or malformed
+    // params refuse startup (a load refusal), never a mid-flow walk.
+    let bind_registry = BindRegistry::standard();
+    for definition in definitions.values() {
+        siros_flow_core::bind::validate_definition(definition, &bind_registry)?;
+    }
+
     let public_url = Url::parse(
         &config
             .service
@@ -184,7 +193,7 @@ pub async fn build(config: &Config) -> Result<App> {
         public_url: public_url.clone(),
         presentation_ttl_seconds: config.presentation_ttl_seconds,
         retention_after_final_seconds: config.retention_after_final_seconds,
-        bind_registry: BindRegistry::standard(),
+        bind_registry,
     });
 
     // The embedded merge: the issuer's own /healthz serves the

@@ -36,24 +36,34 @@ steps:
 
   - bind:
       id: poa-attorney-is-pid-subject
-      # rule-match: the caller's rule names the PoA's attorney and the
-      # PID's subject attributes — the names comparison, labelled
-      # probabilistic (§8.2). P-bw2 swaps in pseudonym-equals when the
-      # rulebook carries the representative's pseudonym.
+      # rule-match: the caller's rule names the PoA's attorney — the
+      # names comparison, labelled probabilistic (§8.2). The rule
+      # arrives as a flow INPUT (only the caller knows what "the
+      # same user" means for its session); the session builds it from
+      # the SAME record as subject_rule below, so the two binds
+      # agreeing is the caller's names-comparison. One rule cannot
+      # bind both credentials: the ported vc semantics are that an
+      # absent claim is a mismatch, so a rule naming the PoA's
+      # attorney_full_name would fail against the PID — the rule
+      # shapes differ because the credentials do. P-bw2 swaps in
+      # pseudonym-equals when the rulebook carries the
+      # representative's pseudonym.
       primitive: rule-match
       params:
         against: { step: pid-and-poa, credential: poa, path: [] }
-        rule_from: { input: identity_match }
+        rule_from: { input: attorney_rule }
       on_mismatch: fail
 
   - bind:
       # The PID satisfies the session's own identity binding (flow 1's
-      # shape inside the larger flow — §5.2: steps interleave).
+      # shape inside the larger flow — §5.2: steps interleave): the
+      # caller's rule over the PID's subject attributes, from the same
+      # session record as attorney_rule.
       id: pid-is-session-user
       primitive: rule-match
       params:
         against: { step: pid-and-poa, credential: pid, path: [] }
-        rule_from: { input: identity_match }
+        rule_from: { input: subject_rule }
       on_mismatch: fail
 
   - issuance:

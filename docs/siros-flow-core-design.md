@@ -328,6 +328,20 @@ steps:
 > tracked as a WE BUILD rulebook change; when it lands,
 > `pseudonym-equals` replaces the names plugin in this flow and the
 > engine does not change.
+>
+> **Landed (P-bw2).** `flows/company-sca.yaml` is this resolution,
+> fixture-backed end-to-end (`company_sca_e2e.rs`): ONE transaction,
+> TWO DCQL queries (PID + PoA) in one `vp_token`, the two
+> `rule-match` binds' rules arriving as TWO flow inputs
+> (`attorney_rule`, `subject_rule`) built from one session record.
+> Two inputs, not one: the ported vc semantics make an absent claim
+> a mismatch, so a single rule naming the PoA's
+> `attorney_full_name` would fail against the PID — the credentials'
+> name shapes differ, so the rules do. The wrong attorney refuses
+> the walk (`bind_mismatch`, the instance `failed`); the SCA issues
+> over the merged subject (the PID's identity claims + the PoA's
+> company) and the catalog's claim building filters to the SCA
+> schema's paths.
 
 Read it as: *steps transform a working set; matchers select what a step
 sees; nothing computes.* The schema details follow in §5.2–§5.3.
@@ -711,6 +725,18 @@ would be; nothing about them is engine-privileged):
 | `pseudonym-equals` | a pseudonym the **wallet presented** — a claim such as the ADR 002 RP-scoped pseudonym, or a ZK public output such as nym_auth's — equals the value the session knows for this subject under this RP scope. The plugin compares; nothing ever derives (§1). Unequivocal *only if* ADR 002's lifecycle guarantees hold (stability across PID renewal, wallet replacement, recovery); until they do, a mismatch is not proof of different identity — plugin, not built-in, for exactly that reason |
 | `rule-match` | a **rule** (claim path → expected value) supplied by the flow's initiating caller, evaluated against one presentation — vc's `IdentityMatch` semantics (Appendix B), the issuer-core §6.5 port generalized to any flow step. On name attributes it is exact as a comparison but probabilistic as identity evidence; a flow that relies on it says so in the definition (§5.1 review note, §14 Q11) |
 
+Two vocabulary rules the implementation pins (P-bw2):
+
+- `same-key`'s sides name the credential ALONE
+  (`{step, credential, path: []}`): the holder key is what the
+  presentation step recorded (SD-JWT `cnf.jwk` / mdoc `DeviceKey`,
+  §5.5), and a claim path on a key ref is a definition error refused
+  at load — a key is not a claim.
+- Every primitive's parameters validate at definition LOAD
+  (`validate_params`), and the primitive name resolves against the
+  registry at load — the §8.3 allowlist discipline is a startup
+  refusal, not a mid-flow surprise.
+
 Determinism is mandatory (ADR 002's rejection of fuzzy attribute
 matching): every primitive and plugin is exact math; **no heuristics
 anywhere**, and a primitive that cannot resolve declares mismatch, never
@@ -903,6 +929,35 @@ Carried up from issuer-core, unchanged in spirit:
 | **P-bw3** | `token` (JWT) + `fetch` plugins; §2.1 flow 4 as integrator-asserted identity + PID presentation | plugin allowlist enforcement tested; declared `fetch` inputs checked at load |
 | **P-bw4** | WMP carrier (`wmp.flow.*` adapter, instance selectors, `oid4vp`/`oid4vci` flow types); §2.1 flows 2–3 | wallet instance round-trip over WMP — against `siros-wallet-headless` as the instance it orchestrates (§7, Q10 resolved) |
 
+**Evidence (the exit criteria, as landed):**
+
+- **P-bw1 (2026-11-09/10):** the pre-auth PID→bind→issue flow
+  definition-only; five shipped definitions, all digest-stable; the
+  engine unchanged by a second flow's data; the definition digest in
+  every instance record. **LIVE on gdc:** the round-trip test
+  (`siros-flow-service/tests/live_gdc.rs`, `--ignored`) runs the
+  whole chain against the deployed
+  `https://sirosid-gdc-flow-core.fly.dev` with gdc's REAL go-trust
+  deciding every hop: start → a PID issued by the deployment's own
+  embedded issuer (x5c-chained, entity-keyed PDP permit) → presented
+  back → EHIC issued, redeemed and verified. The live run forced
+  three issuer-core fixes (SD-JWT VC discovery at
+  `/.well-known/jwt-vc-issuer`; the integrator's AuthZEN subject is
+  the ENTITY not the key fingerprint; the signing chain (x5c) in
+  issued SD-JWTs) — the local PDP doubles could never have caught
+  them.
+- **P-bw2 (2026-11-10):** the bind vocabulary closed —
+  `pseudonym-equals` implemented (compare-only, load-time parameter
+  validation); `same-key` compares the recorded holder keys through
+  the real primitive (credential-addressed refs; the v0.1 test
+  harness that computed its own answer is gone); the allowlist and
+  parameter validation enforce at definition LOAD. §2.1 flow 1
+  (`company-sca`) end-to-end: one transaction, two credential
+  queries, the names-comparison binds labelled probabilistic, the
+  merged-subject SCA, the wrong attorney refused fail-closed
+  (`company_sca_e2e.rs`). **Remaining in the P-bw2 row:** the DC API
+  carrier.
+
 ## 14. Open questions (the iteration list)
 
 1. **RESOLVED (2026-11-08, §5.3): the language.** YAML definitions,
@@ -914,10 +969,15 @@ Carried up from issuer-core, unchanged in spirit:
    trait a deployment's own plugin would use, nothing engine-privileged.
    The criterion for joining the built-ins is structural: same key
    class as `same-key`, never the judgment class of a value comparison.
-   Still open (implementation detail, P-bw1): the exact
-   `BindInputs`/`BindVerdict` surface, and how `pseudonym-equals`
-   receives the session-side value for a nym_auth-derived pseudonym
-   (verifier-core's ZK public outputs are the obvious carrier).
+   RESOLVED (P-bw1/P-bw2, implemented): the surface is
+   `BindPrimitive { name, validate_params, bind(context, params) }` —
+   the context (§5.5) supplies the presentation results, holder keys
+   and flow inputs; `validate_params` runs at definition load. The
+   session-side value reaches `pseudonym-equals` as a context ref to
+   a flow INPUT (`expected`); the presented side is a ref to the
+   presented claim (a nym_auth public output arrives as one). The
+   wallet derives, the plugin only compares (§1) — the derivation
+   inputs never reach the engine.
 3. **RESOLVED (2026-11-09, §5.4, §9): PDP placement.** Engine-boundary
    calls, with the definition digest in the evidence; flows express
    policy gates as `when:` over recorded evidence, not as a `pdp:` step.

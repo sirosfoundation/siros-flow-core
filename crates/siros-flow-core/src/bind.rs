@@ -60,14 +60,14 @@ impl BindPrimitive for SameKey {
 
     fn validate_params(&self, params: &serde_json::Value) -> Result<()> {
         for side in ["left", "right"] {
-            parse_ref(params, side)?;
+            parse_ref(SAME_KEY, params, side)?;
         }
         Ok(())
     }
 
     fn bind(&self, context: &FlowContext, params: &serde_json::Value) -> Result<BindOutcome> {
-        let left = holder_thumbprint(context, &parse_ref(params, "left")?)?;
-        let right = holder_thumbprint(context, &parse_ref(params, "right")?)?;
+        let left = holder_thumbprint(context, &parse_ref(SAME_KEY, params, "left")?)?;
+        let right = holder_thumbprint(context, &parse_ref(SAME_KEY, params, "right")?)?;
         Ok(BindOutcome {
             matched: left == right,
             mismatch: if left == right {
@@ -79,35 +79,87 @@ impl BindPrimitive for SameKey {
     }
 }
 
-fn parse_ref(params: &serde_json::Value, side: &str) -> Result<ContextRef> {
+fn parse_ref(primitive: &str, params: &serde_json::Value, side: &str) -> Result<ContextRef> {
     let value = params.get(side).ok_or_else(|| {
-        Error::language_invalid(format!("same-key: a {side} reference is required"))
+        Error::language_invalid(format!("{primitive}: a {side} reference is required"))
     })?;
     serde_json::from_value(value.clone())
-        .map_err(|e| Error::language_invalid(format!("same-key: the {side} reference: {e}")))
+        .map_err(|e| Error::language_invalid(format!("{primitive}: the {side} reference: {e}")))
 }
 
+/// The holder key of the credential a `same-key` side names: the key
+/// the presentation step recorded (SD-JWT `cnf.jwk` / mdoc
+/// `DeviceKey` — extracted by the verifier, §8.2), RFC 7638
+/// thumbprinted. The ref names the step's credential; a claim path is
+/// a definition error (a key is not a claim — fail-closed, §5.4), and
+/// the ref must name both the step and the credential.
 fn holder_thumbprint(context: &FlowContext, reference: &ContextRef) -> Result<String> {
-    let key_value = context.resolve(&ContextRef {
-        input: reference.input.clone(),
-        step: reference.step.clone(),
-        credential: reference.credential.clone(),
-        path: reference.path.clone(),
-    })?;
-    let jwk: jose_rs::jwk::Jwk = serde_json::from_value(key_value).map_err(|e| {
-        Error::context_unresolved(format!("{}: not a JWK ({e})", reference.render()))
-    })?;
-    if jwk.d.is_some() {
-        return Err(Error::context_unresolved(format!(
-            "{}: a holder key carrying private material is refused",
+    if !reference.path.is_empty() {
+        return Err(Error::language_invalid(format!(
+            "same-key: {} names a claim path; the holder key is addressed by the credential alone",
             reference.render()
         )));
     }
+    let Some(step) = &reference.step else {
+        return Err(Error::context_unresolved(format!(
+            "same-key: {} names no presentation step",
+            reference.render()
+        )));
+    };
+    let Some(result) = context.presentations.get(step) else {
+        return Err(Error::context_unresolved(format!(
+            "step {step:?} has no presentation result yet — steps run in order (§5.2)"
+        )));
+    };
+    let Some(credential) = &reference.credential else {
+        return Err(Error::context_unresolved(format!(
+            "same-key: {} names no credential",
+            reference.render()
+        )));
+    };
+    let Some(presented) = result.credential(credential) else {
+        return Err(Error::context_unresolved(format!(
+            "step {step:?} presented no credential {credential:?}"
+        )));
+    };
+    let key_value = presented.holder_key.clone().ok_or_else(|| {
+        Error::context_unresolved(format!(
+            "the credential {credential:?} presented at {step:?} carries no holder key"
+        ))
+    })?;
+    let jwk: jose_rs::jwk::Jwk = serde_json::from_value(key_value).map_err(|e| {
+        Error::context_unresolved(format!(
+            "the holder key of {credential:?} is not a JWK ({e})"
+        ))
+    })?;
+    if jwk.d.is_some() {
+        return Err(Error::context_unresolved(format!(
+            "the holder key of {credential:?} carries private material — refused"
+        )));
+    }
     jose_rs::jwk::thumbprint::thumbprint_sha256(&jwk)
-        .map_err(|e| Error::context_unresolved(format!("{}: {e}", reference.render())))
+        .map_err(|e| Error::context_unresolved(format!("the holder key of {credential:?}: {e}")))
 }
 
 // ─── The reference plugins ─────────────────────────────────────────────────
+
+/// Validate a definition's bind steps against a registry (§8.3, the
+/// plugin-allowlist discipline): every `primitive:` name resolves and
+/// its params pass the primitive's own `validate_params` — a
+/// definition referencing a plugin outside the allowlist, or naming
+/// malformed parameters, refuses at LOAD, never mid-flow.
+pub fn validate_definition(
+    definition: &crate::language::FlowDefinition,
+    registry: &BindRegistry,
+) -> Result<()> {
+    for step in &definition.steps {
+        if let crate::language::Step::Bind(bind) = step {
+            let primitive = registry.resolve(&bind.primitive)?;
+            primitive.validate_params(&bind.params)?;
+        }
+    }
+    Ok(())
+}
 
 /// `rule-match` — reference plugin: a rule (claim path → expected
 /// value) supplied by the flow's **initiating caller** (a flow input;
@@ -129,7 +181,7 @@ impl BindPrimitive for RuleMatch {
     }
 
     fn validate_params(&self, params: &serde_json::Value) -> Result<()> {
-        parse_ref(params, "against")?;
+        parse_ref(RULE_MATCH, params, "against")?;
         if params
             .get("rule_from")
             .and_then(|v| v.get("input"))
@@ -143,7 +195,7 @@ impl BindPrimitive for RuleMatch {
     }
 
     fn bind(&self, context: &FlowContext, params: &serde_json::Value) -> Result<BindOutcome> {
-        let against = parse_ref(params, "against")?;
+        let against = parse_ref(RULE_MATCH, params, "against")?;
         let rule_input = params
             .get("rule_from")
             .and_then(|v| v.get("input"))
@@ -185,6 +237,65 @@ fn issuer_error(error: siros_issuer_core::Error) -> Error {
     Error::new(crate::error::code::INVALID_INPUT, error.message)
 }
 
+/// `pseudonym-equals` — reference plugin: a pseudonym the **wallet
+/// presented** (a claim such as the ADR 002 RP-scoped pseudonym, or a
+/// ZK public output such as nym_auth's) equals the value the session
+/// knows for this subject under this RP scope. The plugin compares; it
+/// **never derives** (§1: the wallet derives, flow-core compares — an
+/// RP holding the nonce could compute every other RP's pseudonym, so
+/// the derivation inputs never reach the engine). Unequivocal *only if*
+/// ADR 002's lifecycle guarantees hold (stability across PID renewal,
+/// wallet replacement, recovery); until they do, a mismatch is not
+/// proof of different identity — plugin, not built-in, for exactly
+/// that reason (§8.2).
+pub struct PseudonymEquals;
+
+const PSEUDONYM_EQUALS: &str = "pseudonym-equals";
+
+impl BindPrimitive for PseudonymEquals {
+    fn name(&self) -> &'static str {
+        PSEUDONYM_EQUALS
+    }
+
+    fn validate_params(&self, params: &serde_json::Value) -> Result<()> {
+        parse_ref(PSEUDONYM_EQUALS, params, "presented")?;
+        // The session-side value: a context ref (the recorded source of
+        // the expected pseudonym) — never a literal in the definition
+        // (a pseudonym is subject data; it arrives as a flow INPUT).
+        // PARSED here, not merely present: a malformed ref refuses at
+        // LOAD (fail-closed), never mid-flow.
+        let expected = params.get("expected").ok_or_else(|| {
+            Error::language_invalid(
+                "pseudonym-equals: an expected reference is required (a flow input carrying the session's pseudonym for this subject)",
+            )
+        })?;
+        serde_json::from_value::<ContextRef>(expected.clone()).map_err(|e| {
+            Error::language_invalid(format!("pseudonym-equals: the expected reference: {e}"))
+        })?;
+        Ok(())
+    }
+
+    fn bind(&self, context: &FlowContext, params: &serde_json::Value) -> Result<BindOutcome> {
+        let presented_ref = parse_ref(PSEUDONYM_EQUALS, params, "presented")?;
+        let presented = context.resolve(&presented_ref)?;
+        let expected: ContextRef = serde_json::from_value(params["expected"].clone())
+            .map_err(|e| Error::language_invalid(format!("pseudonym-equals: expected: {e}")))?;
+        let expected_value = context.resolve(&expected)?;
+        let matched = values_equal(&presented, &expected_value);
+        Ok(BindOutcome {
+            matched,
+            mismatch: if matched {
+                None
+            } else {
+                Some(
+                    "the presented pseudonym differs from the session's value for this subject and RP scope"
+                        .to_owned(),
+                )
+            },
+        })
+    }
+}
+
 /// `claim-equals` — reference plugin: the claim at context path `left`
 /// equals the claim at path `right` (or a caller-supplied literal).
 /// Exact, format-aware path lookup; a value comparison, so the flow
@@ -199,7 +310,7 @@ impl BindPrimitive for ClaimEquals {
     }
 
     fn validate_params(&self, params: &serde_json::Value) -> Result<()> {
-        parse_ref(params, "left")?;
+        parse_ref(CLAIM_EQUALS, params, "left")?;
         if params.get("right").is_none() {
             return Err(Error::language_invalid(
                 "claim-equals: a right reference (or literal) is required",
@@ -209,7 +320,7 @@ impl BindPrimitive for ClaimEquals {
     }
 
     fn bind(&self, context: &FlowContext, params: &serde_json::Value) -> Result<BindOutcome> {
-        let left_ref = parse_ref(params, "left")?;
+        let left_ref = parse_ref(CLAIM_EQUALS, params, "left")?;
         let left = context.resolve(&left_ref)?;
         // The right side: a typed ref, a `{literal: …}` object, or a
         // bare literal — the object-with-one-literal-key form keeps
@@ -310,6 +421,7 @@ impl BindRegistry {
                 Box::new(SameKey),
                 Box::new(RuleMatch),
                 Box::new(ClaimEquals),
+                Box::new(PseudonymEquals),
             ],
         }
     }
