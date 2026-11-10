@@ -970,6 +970,34 @@ Carried up from issuer-core, unchanged in spirit:
   the walk; the redirect flow's audience (`client_id`) is refused —
   a DC API response cannot be replayed into a redirect context and
   vice versa. **P-bw2 is closed.**
+- **The wallet drill (2026-11-10):** the real wallet-frontend drove a
+  started flow against the deployed gdc (sirosid-tests
+  specs/flow/flow-core-drill.spec.ts — the standing spec, runnable
+  against any deployment with FRONTEND_URL/ADMIN_URL/ADMIN_TOKEN/
+  VC_APIGW_URL/FLOW_CORE_URL). Proven with the real wallet: the
+  request-by-reference surface (the deep link → /cb → the request
+  object fetched cross-origin → the DCQL matched → the honest
+  preview → the Share sign), the wallet-side auth (a CDP virtual
+  authenticator as the WSCD), and the registry PID redeemed from
+  the vc-apigw through the authorization-code leg into the wallet.
+  Surfaced and fixed on flow-core's side: the request-object
+  endpoint (§6.1 — a real wallet fetches the JAR from a URL; the
+  reply-by-value alone is a custom driver's shape), the
+  wallet-facing CORS, the ONE route table (the merged surface 404'd
+  what the standalone served), and — with verifier-core 443b2af —
+  the OID4VP request's client_metadata must carry
+  `authorization_encrypted_response_alg/_enc` or wallets refuse to
+  encrypt and their engine rejects the answer. Surfaced and NOT
+  fixed here (the wallet stack's own line): the deployed gdc wallet
+  pair cannot complete a `direct_post.jwt` presentation — the
+  engine (integration 12) expects the client to return
+  `response_jwe`, the frontend signs plainly, and gdc.yaml documents
+  exactly this "BREAKING for clients … until the SDKs land" state.
+  The go-wallet-backend WIP (engine-side JARM encryption) closes it.
+  The drill therefore stops one hop short of the PDP permit — the
+  hop is the wallet pair's, not flow-core's, and the scripted live
+  round trip (live_gdc.rs) already proves the PDP permit path with
+  the same trust shape.
 - **P-bw3 (2026-11-10):** the `token` and `fetch` step kinds over the
   plugin surface (§6.7), with the reference `id-token` plugin (the
   issuer-core `verify_bearer_assertion` checks generalized:
