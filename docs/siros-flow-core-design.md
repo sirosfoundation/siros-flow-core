@@ -519,9 +519,19 @@ Two rules keep the vocabulary honest:
 - The carrier (§7) decides how the request reaches the wallet: a
   `request_uri` in a deep link / QR, a DC API request (verifier-core's
   `create_dc_api_request`), or a WMP `oid4vp` flow start carrying
-  `request_uri_ref`. The response path is OID4VP's own
-  (`direct_post.jwt` to the `response_uri`, or the DC API response) in
-  every case.
+  `request_uri_ref`. The response path is OID4VP's own in every case:
+  `direct_post.jwt` (the DEFAULT — the response is a JWE to the
+  request's ephemeral key) or the plain `direct_post` mode (LANDED,
+  per-step opt-in): the wallet's `vp_token` + `state` form rides TLS
+  to the `response_uri` with no JWE layer. The plain mode's
+  confidentiality tradeoff is stated VISIBLY in the definition (the
+  reviewed file says what the response gives up); the modes never
+  cross — a plain answer to an encrypted request and a JWE to a plain
+  one both refuse. The wallet pair deployed on gdc completes the plain
+  mode today; the encrypted mode waits on its frontend's
+  response-encryption branch — the shipped
+  `ehic-pid-presentation-plain` twin exists so the drill runs
+  end-to-end against the current pair.
 - **Dependency — RESOLVED (P-bw2):** the documented restriction holds —
   multi-query presentations are plain `credentials` arrays (two
   queries, one `vp_token`, proven end-to-end by `company-sca`);
@@ -1038,6 +1048,22 @@ Carried up from issuer-core, unchanged in spirit:
   hop is the wallet pair's, not flow-core's, and the scripted live
   round trip (live_gdc.rs) already proves the PDP permit path with
   the same trust shape.
+- **The plain direct_post mode (2026-11-10, owner-approved):**
+  OID4VP's unencrypted response mode, as a per-step opt-in with the
+  encrypted mode the default — verifier-core's
+  wallet-drill/plain-direct-post branch (dfe710e8): the plain request
+  carries no JARM parameters (a wallet must not be invited to
+  encrypt), the mdoc transcript keeps the family's shared 4-item
+  handover (the .jwt suffix governs only the response's encryption),
+  and process_response_plain takes the clear form with every
+  encrypted-mode check — the modes never cross (tested both ways).
+  The shipped ehic-pid-presentation-plain twin drives the drill
+  end-to-end against the CURRENT gdc wallet pair: the real wallet's
+  Share → the engine's plain POST → the live PDP permit → the EHIC.
+  Surfaces the drill's odd find on the way: issuer-core serializes
+  the pre-authorized grant member hyphenated (OID4VCI ID1 §4.1.1,
+  like the grant URN's tail) — every test that indexes the offer
+  must use `pre-authorized_code`, never the snake_case spelling.
 - **P-bw3 (2026-11-10):** the `token` and `fetch` step kinds over the
   plugin surface (§6.7), with the reference `id-token` plugin (the
   issuer-core `verify_bearer_assertion` checks generalized:

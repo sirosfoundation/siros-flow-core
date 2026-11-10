@@ -73,6 +73,21 @@ pub fn derive_dcql(queries: &[siros_flow_core::language::CredentialQuery]) -> Re
     Ok(json!({ "credentials": credentials }))
 }
 
+/// The wallet's response, in the shape the armed request's mode
+/// demanded (§6.1): the encrypted modes answer with a `response` JWE
+/// form value; the plain direct_post mode answers with the clear
+/// `vp_token` + `state` body. The modes never cross — the verifier
+/// refuses a mismatched answer.
+#[derive(Debug, Clone)]
+pub enum PresentationResponse {
+    /// The `response` form value: a JWE to the request's ephemeral
+    /// key (the `direct_post.jwt` / `dc_api.jwt` modes).
+    Jwe(String),
+    /// The clear `vp_token` + `state` body (the plain `direct_post`
+    /// mode).
+    Plain(Vec<u8>),
+}
+
 /// One armed presentation step: what waits for the wallet.
 pub struct ArmedPresentation {
     /// The signed request object (the JAR the wallet reads).
@@ -119,11 +134,20 @@ pub fn arm_presentation(
         vp_formats_supported: None,
         client_id: None,
     };
-    // The carrier decides how the request reaches the wallet (§7);
-    // verification and response processing are identical either way —
-    // only the response mode and the holder-binding audience change.
-    let (carrier, jar, oid4vp_session) = match step.carrier.unwrap_or(state.default_carrier) {
-        siros_flow_core::language::Carrier::Deeplink => {
+    // The carrier decides how the request reaches the wallet (§7) and
+    // the response mode how the answer comes back (§6.1): the
+    // definition states both — the plain mode's confidentiality
+    // tradeoff is visible in the reviewed file. The DC API carrier
+    // arms only its .jwt profile (the browser-relayed response
+    // shape); the plain mode refused at load for it, and this match
+    // refuses it again should a deployment default cross them.
+    let carrier_kind = step.carrier.unwrap_or(state.default_carrier);
+    let mode = step.response_mode.unwrap_or_default();
+    let (carrier, jar, oid4vp_session) = match (carrier_kind, mode) {
+        (
+            siros_flow_core::language::Carrier::Deeplink,
+            siros_flow_core::language::ResponseMode::Jwt,
+        ) => {
             let (jar, session) = oid4vp::create_request(
                 &request_config,
                 &signer,
@@ -134,7 +158,23 @@ pub fn arm_presentation(
             .map_err(|e| Error::new(code::INVALID_INPUT, format!("request: {e}")))?;
             ("deeplink", jar, session)
         }
-        siros_flow_core::language::Carrier::DcApi => {
+        (
+            siros_flow_core::language::Carrier::Deeplink,
+            siros_flow_core::language::ResponseMode::Plain,
+        ) => {
+            // OID4VP's plain direct_post: the response form rides TLS
+            // with no JWE layer (the definition's visible tradeoff).
+            let (jar, session) = oid4vp::create_plain_request(
+                &request_config,
+                &signer,
+                "ES256",
+                &state.cert_chain_der,
+                now,
+            )
+            .map_err(|e| Error::new(code::INVALID_INPUT, format!("request: {e}")))?;
+            ("deeplink", jar, session)
+        }
+        (siros_flow_core::language::Carrier::DcApi, _) => {
             // The DC API's holder-binding audience is the ORIGIN
             // of the page calling `credentials.get` — this
             // service's own public origin (the same origin that
@@ -142,6 +182,11 @@ pub fn arm_presentation(
             // create_dc_api_request validates the bare-origin
             // shape and sets the DC-API handover the wallet
             // signs into its key-binding proof.
+            if mode == siros_flow_core::language::ResponseMode::Plain {
+                return Err(Error::language_invalid(
+                    "the plain direct_post mode arms only the deep-link carrier",
+                ));
+            }
             let origin = state.public_url.origin().ascii_serialization();
             let (jar, session) = oid4vp::create_dc_api_request(
                 &request_config,
@@ -194,7 +239,7 @@ pub fn verify_presentation(
     state: &FlowServiceState,
     flow_instance: &str,
     sealed_session: &[u8],
-    jwe: &str,
+    response: &PresentationResponse,
 ) -> Result<Vec<(String, VerifiedCredentialOutcome)>> {
     let now = crate::status::now_unix();
     let session_value = state
@@ -204,8 +249,19 @@ pub fn verify_presentation(
     let oid4vp_session: siros_verifier_core::oid4vp::Session =
         serde_json::from_value(session_value)
             .map_err(|e| Error::configuration(format!("the sealed oid4vp session: {e}")))?;
-    let results = oid4vp::process_response(&oid4vp_session, jwe, now, &X5cLeaf)
-        .map_err(|e| Error::new(code::INVALID_INPUT, format!("presentation: {e}")))?;
+    let results = match response {
+        // The encrypted modes: the `response` JWE form value.
+        PresentationResponse::Jwe(jwe) => {
+            oid4vp::process_response(&oid4vp_session, jwe, now, &X5cLeaf)
+        }
+        // OID4VP's plain direct_post: the clear `vp_token` + state
+        // body — the same checks, no JWE layer (§6.1's stated
+        // tradeoff).
+        PresentationResponse::Plain(body) => {
+            oid4vp::process_response_plain(&oid4vp_session, body, now, &X5cLeaf)
+        }
+    }
+    .map_err(|e| Error::new(code::INVALID_INPUT, format!("presentation: {e}")))?;
 
     let mut out = Vec::new();
     for result in &results {

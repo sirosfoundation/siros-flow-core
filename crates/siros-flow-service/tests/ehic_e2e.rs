@@ -265,8 +265,13 @@ async fn spawn_flow(
         // The integrator key rides a temp file (the client reads the
         // path; the test writes the JWK it also registered).
         {
-            let path =
-                std::env::temp_dir().join(format!("flow-integrator-{}.jwk", std::process::id()));
+            // Unique per call: the tests run concurrently in one
+            // process and a shared name races (one truncates while
+            // another reads).
+            static SPAWNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = SPAWNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let path = std::env::temp_dir()
+                .join(format!("flow-integrator-{}-{n}.jwk", std::process::id()));
             std::fs::write(&path, serde_json::to_string(&integrator_key).unwrap()).unwrap();
             path.display().to_string()
         }
@@ -842,5 +847,288 @@ async fn the_sse_stream_delivers_the_typed_event_live() {
     assert!(
         received.contains("EHIC offer is ready"),
         "the definition-authored message rides the frame: {received}"
+    );
+}
+
+// ─── §6.1: the plain direct_post mode (the shipped plain twin) ─────────────
+
+#[tokio::test]
+async fn the_plain_mode_completes_with_the_clear_response_form() {
+    use siros_verifier_core::sdjwt::HashAlg;
+    use siros_verifier_core::testutil::{self, IssueSpec, KbSpec, Seg};
+
+    let (integrator_signer, integrator_private) = test_signer("flow-integrator-key");
+    let _ = integrator_signer;
+    let (issuer_url, issuer_signer, _allocator) =
+        spawn_issuer(&integrator_private.to_public_jwk()).await;
+    let definitions_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../flows")
+        .display()
+        .to_string();
+    let flow_url = spawn_flow(
+        &definitions_dir,
+        &issuer_url,
+        siros_issuer_core::oid4vci::issuer_identifier(&Url::parse(ISSUER_BASE).unwrap()).to_owned(),
+        integrator_private,
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    // Start the SHIPPED plain flow.
+    let start: Value = client
+        .post(format!("{flow_url}/flows/ehic-pid-presentation-plain/start"))
+        .json(&json!({"coverage": {"pan": "n/a", "document_number": "n/a", "starting_date": "n/a", "ending_date": "n/a", "date_of_issuance": "n/a", "authentic_source": "n/a"}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let jar = start["authorization_request"].as_str().unwrap().to_owned();
+    let payload: Value = serde_json::from_slice(
+        &siros_issuer_core::sdjwt_issue::b64u_decode(jar.split('.').nth(1).unwrap()).unwrap(),
+    )
+    .unwrap();
+    // The armed mode: plain direct_post — and the request never
+    // invites encryption.
+    assert_eq!(payload["response_mode"], "direct_post");
+    assert!(
+        payload["client_metadata"]
+            .get("authorization_encrypted_response_alg")
+            .is_none(),
+        "a plain-mode request carries no JARM parameters"
+    );
+    let nonce = payload["nonce"].as_str().unwrap().to_owned();
+    let oid4vp_state = payload["state"].as_str().unwrap().to_owned();
+    let client_id = payload["client_id"].as_str().unwrap().to_owned();
+    let response_uri = payload["response_uri"]
+        .as_str()
+        .unwrap()
+        .replace(ISSUER_BASE, flow_url.trim_end_matches('/'));
+
+    // The wallet presents the PID (key-bound as usual — the plain
+    // mode changes only the response's transport, not the binding).
+    let (issuer_cert, issuer_key) = testutil::self_signed_ec("pid-issuer.example", "ES256");
+    let holder = testutil::ec_jwk("ES256", "holder");
+    let now = now_unix();
+    let mut spec = IssueSpec::new(json!({
+        "iss": "https://pid-issuer.example",
+        "vct": "urn:eudi:pid:arf-1.8:1",
+        "iat": now - 10,
+        "exp": now + 100_000,
+        "given_name": "Plain",
+        "family_name": "Response",
+        "birthdate": "1999-12-31",
+    }));
+    spec.holder_pub = Some(testutil::public_of(&holder));
+    spec.x5c_der = vec![issuer_cert];
+    spec.conceal = vec![
+        vec![Seg::Key("given_name")],
+        vec![Seg::Key("family_name")],
+        vec![Seg::Key("birthdate")],
+    ];
+    let issued = testutil::issue(&issuer_key, &spec).unwrap();
+    let presentation = testutil::present(
+        &issued,
+        &[0, 1, 2],
+        Some(KbSpec {
+            holder: &holder,
+            aud: &client_id,
+            nonce: &nonce,
+            iat: now,
+        }),
+        HashAlg::Sha256,
+    )
+    .unwrap();
+
+    // THE CLEAR FORM: `vp_token` (a JSON string) + `state`,
+    // urlencoded — OID4VP's direct_post body, no JWE layer.
+    let form_body = format!(
+        "vp_token={}&state={}",
+        urlencoding::encode(
+            &serde_json::to_string(&json!({
+                "pid": [presentation],
+            }))
+            .unwrap()
+        ),
+        urlencoding::encode(&oid4vp_state),
+    );
+    let reply: Value = client
+        .post(&response_uri)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(form_body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        reply["next"], "complete",
+        "the plain walk completed: {reply}"
+    );
+
+    // The oracle: the EHIC verifies with the PID's claims (the same
+    // derivation, the plain transport).
+    let offer = &reply["credential_offers"][0];
+    assert_eq!(offer["credential"], "urn:eudi:ehic:1");
+    let offer_uri = offer["offer_uri"]
+        .as_str()
+        .unwrap()
+        .replace(ISSUER_BASE, issuer_url.trim_end_matches('/'));
+    let fetched: Value = client
+        .get(&offer_uri)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let grants = &fetched["grants"];
+    let grant = &grants["urn:ietf:params:oauth:grant-type:pre-authorized_code"];
+    // issuer-core serializes the grant member hyphenated (OID4VCI ID1
+    // §4.1.1 — like the grant URN's tail), not snake_case.
+    let code = grant["pre-authorized_code"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the pre-authorized grant, offer: {fetched}"))
+        .to_owned();
+    let client_key: jose_rs::jwk::Jwk =
+        serde_json::from_str(CLIENT_PRIVATE_JWK).expect("the test client key");
+    let client_assertion = sign_jwt(
+        &client_key,
+        "jwt",
+        &json!({
+            "iss": "suite-wallet",
+            "sub": "suite-wallet",
+            "aud": siros_issuer_core::oid4vci::issuer_identifier(&Url::parse(ISSUER_BASE).unwrap()),
+            "iat": now_unix(),
+            "exp": now_unix() + 300,
+        }),
+        true,
+    );
+    let token: Value = client
+        .post(format!("{issuer_url}/token"))
+        .form(&[
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:pre-authorized_code".to_owned(),
+            ),
+            ("pre_authorized_code", code),
+            (
+                "client_assertion_type",
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer".to_owned(),
+            ),
+            ("client_assertion", client_assertion),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let c_nonce = token["c_nonce"].as_str().unwrap().to_owned();
+    let wallet_key = ec_key();
+    let proof = sign_jwt(
+        &wallet_key,
+        "openid4vci-proof+jwt",
+        &json!({
+            "iss": "wallet",
+            "aud": siros_issuer_core::oid4vci::issuer_identifier(&Url::parse(ISSUER_BASE).unwrap()),
+            "nonce": c_nonce,
+            "iat": now_unix(),
+        }),
+        true,
+    );
+    let credential: Value = client
+        .post(format!("{issuer_url}/credential"))
+        .bearer_auth(token["access_token"].as_str().unwrap())
+        .json(&json!({
+            "credential_configuration_id": "urn:eudi:ehic:1",
+            "proof": { "proof_type": "jwt", "jwt": proof },
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ehic = credential["credentials"][0]["credential"]
+        .as_str()
+        .expect("the EHIC");
+
+    use siros_verifier_core::sdjwt::{HolderBinding, StaticKey, VerifyParams};
+    let verified = siros_verifier_core::sdjwt::verify(
+        ehic,
+        &StaticKey(
+            siros_issuer_core::signer::Signer::public_jwk(&issuer_signer)
+                .expect("the issuer's public key"),
+        ),
+        &VerifyParams::new(now_unix(), HolderBinding::NotRequired),
+    )
+    .expect("the EHIC verifies");
+    assert_eq!(verified.claims["given_name"], "Plain");
+    assert_eq!(verified.claims["family_name"], "Response");
+}
+
+#[tokio::test]
+async fn the_response_modes_never_cross() {
+    let (integrator_signer, integrator_private) = test_signer("flow-integrator-key");
+    let _ = integrator_signer;
+    let (issuer_url, _issuer_signer, _allocator) =
+        spawn_issuer(&integrator_private.to_public_jwk()).await;
+    let definitions_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../flows")
+        .display()
+        .to_string();
+    let flow_url = spawn_flow(
+        &definitions_dir,
+        &issuer_url,
+        siros_issuer_core::oid4vci::issuer_identifier(&Url::parse(ISSUER_BASE).unwrap()).to_owned(),
+        integrator_private,
+    )
+    .await;
+    let client = reqwest::Client::new();
+
+    // An ENCRYPTED-mode flow: the plain form must refuse (and the
+    // refusal consumes the single-use arm — the honest fail).
+    let start: Value = client
+        .post(format!("{flow_url}/flows/ehic-pid-presentation/start"))
+        .json(&json!({"coverage": {"pan": "n/a", "document_number": "n/a", "starting_date": "n/a", "ending_date": "n/a", "date_of_issuance": "n/a", "authentic_source": "n/a"}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let jar = start["authorization_request"].as_str().unwrap().to_owned();
+    let payload: Value = serde_json::from_slice(
+        &siros_issuer_core::sdjwt_issue::b64u_decode(jar.split('.').nth(1).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let response_uri = payload["response_uri"]
+        .as_str()
+        .unwrap()
+        .replace(ISSUER_BASE, flow_url.trim_end_matches('/'));
+    let form_body = format!(
+        "vp_token={}&state={}",
+        urlencoding::encode(
+            &serde_json::to_string(&json!({
+                "pid": ["anything"],
+            }))
+            .unwrap()
+        ),
+        urlencoding::encode(payload["state"].as_str().unwrap_or_default()),
+    );
+    let reply_response = client
+        .post(&response_uri)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(form_body)
+        .send()
+        .await
+        .unwrap();
+    let text = reply_response.text().await.unwrap();
+    assert!(
+        text.contains("plain direct_post mode"),
+        "a plain body answers only the plain mode: {text}"
     );
 }

@@ -217,8 +217,34 @@ async fn flow_response(
 ) -> HandlerResult<Json<Value>> {
     // One value out of an application/x-www-form-urlencoded body (the
     // OID4VP direct_post.jwt shape — the same parse Mode B performs).
-    let jwe = form_value(&body, "response")
-        .ok_or_else(|| err(Error::invalid_input("response is required")))?;
+    // The response's shape follows the armed mode (§6.1): the
+    // encrypted modes answer `response=<JWE>`; the plain direct_post
+    // mode answers the clear `vp_token` + `state` form. The verifier
+    // refuses a mode-crossing answer — the modes never mix.
+    let response = if let Some(jwe) = form_value(&body, "response") {
+        crate::presentation::PresentationResponse::Jwe(jwe)
+    } else if let Some(vp_token) = form_value(&body, "vp_token") {
+        // The plain form: `vp_token` (a JSON string) + `state`,
+        // urlencoded (OID4VP's direct_post body — the same shape the
+        // JWE's plaintext carries, rebuilt for the verifier).
+        let vp: Value = serde_json::from_str(&vp_token).map_err(|e| {
+            err(Error::invalid_input(format!(
+                "the vp_token form value is not JSON: {e}"
+            )))
+        })?;
+        let mut response = serde_json::Map::new();
+        response.insert("vp_token".to_owned(), vp);
+        if let Some(state) = form_value(&body, "state") {
+            response.insert("state".to_owned(), Value::String(state));
+        }
+        crate::presentation::PresentationResponse::Plain(
+            serde_json::to_vec(&Value::Object(response)).expect("the rebuilt response serializes"),
+        )
+    } else {
+        return Err(err(Error::invalid_input(
+            "a response requires either `response` (the encrypted modes) or `vp_token` (the plain direct_post mode)",
+        )));
+    };
     // Claim the arm single-use FIRST (peek-then-take would race).
     let record = state
         .store
@@ -242,7 +268,7 @@ async fn flow_response(
             )))
         })?
         .clone();
-    match driver::resume_flow(&state, &definition, &record, &jwe)
+    match driver::resume_flow(&state, &definition, &record, response)
         .await
         .map_err(err)?
     {

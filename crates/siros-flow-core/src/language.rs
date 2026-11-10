@@ -79,6 +79,30 @@ pub struct PresentationStep {
     /// the wallet and how the response comes back.
     #[serde(default)]
     pub carrier: Option<Carrier>,
+    /// The response mode the step arms (§6.1): how the wallet
+    /// returns its response. Absent = `direct_post.jwt` (the
+    /// default, the encrypted mode). `direct_post` is OID4VP's plain
+    /// mode — the `vp_token` + `state` form rides TLS to the
+    /// `response_uri` with NO JWE layer: a confidentiality tradeoff
+    /// stated VISIBLY in the definition (the wallet stack deployed on
+    /// gdc completes the plain mode today; the encrypted mode waits
+    /// on its frontend's response-encryption branch).
+    #[serde(default)]
+    pub response_mode: Option<ResponseMode>,
+}
+
+/// The response mode a presentation step arms (§6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ResponseMode {
+    /// OID4VP's plain `direct_post`: the response form in the clear
+    /// (over TLS), no JWE layer. The visible, reviewed tradeoff.
+    #[serde(rename = "direct_post")]
+    Plain,
+    /// The encrypted default: the response is a JWE to the request's
+    /// ephemeral key (`direct_post.jwt`).
+    #[default]
+    #[serde(rename = "direct_post.jwt")]
+    Jwt,
 }
 
 /// The carrier a wallet-facing step rides (design §7):
@@ -526,6 +550,15 @@ fn validate_presentation(presentation: &PresentationStep) -> Result<()> {
             )));
         }
         query_ids.push(query.id.as_str());
+    }
+    if presentation.response_mode == Some(ResponseMode::Plain)
+        && presentation.carrier == Some(Carrier::DcApi)
+    {
+        return Err(Error::language_invalid(format!(
+            "presentation {:?}: the plain direct_post mode arms only the deep-link carrier \
+             (the DC API's browser-relayed response is its .jwt profile)",
+            presentation.id
+        )));
     }
     for required in &presentation.require {
         if !query_ids.contains(&required.as_str()) {

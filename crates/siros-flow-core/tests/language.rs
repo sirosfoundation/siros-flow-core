@@ -243,6 +243,59 @@ fn notify_steps_parse_and_refuse_value_references() {
 }
 
 #[test]
+fn the_response_mode_vocabulary_closes_at_the_carrier() {
+    // §6.1: the plain mode parses and defaults to the encrypted one.
+    let definition = FlowDefinition::from_yaml(
+        "flow: rm-ok\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      response_mode: direct_post\n      request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Presentation(step) = &definition.steps[0] else {
+        panic!("the first step is the presentation");
+    };
+    assert_eq!(
+        step.response_mode,
+        Some(siros_flow_core::language::ResponseMode::Plain)
+    );
+
+    // Absent = the encrypted default; the explicit .jwt token parses.
+    let definition = FlowDefinition::from_yaml(
+        "flow: rm-default\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]\n  - presentation:\n      id: q\n      response_mode: direct_post.jwt\n      request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]\n",
+    )
+    .unwrap();
+    let siros_flow_core::language::Step::Presentation(first) = &definition.steps[0] else {
+        panic!("first")
+    };
+    assert_eq!(first.response_mode, None);
+    let siros_flow_core::language::Step::Presentation(second) = &definition.steps[1] else {
+        panic!("second")
+    };
+    assert_eq!(
+        second.response_mode,
+        Some(siros_flow_core::language::ResponseMode::Jwt)
+    );
+
+    // The plain mode arms only the deep-link carrier: an explicit
+    // dc_api carrier + plain mode refuses at LOAD (the DC API's
+    // browser-relayed response is its .jwt profile).
+    let error = FlowDefinition::from_yaml(
+        "flow: rm-cross\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      carrier: dc_api\n      response_mode: direct_post\n      request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]\n",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "flow_language_invalid");
+    assert!(
+        error.message.contains("deep-link carrier"),
+        "the refusal names the constraint: {error}"
+    );
+
+    // An unknown token refuses (the closed vocabulary).
+    let error = FlowDefinition::from_yaml(
+        "flow: rm-bad\nlanguage_version: 1\nsteps:\n  - presentation:\n      id: p\n      response_mode: query\n      request: [{id: pid, format: dc+sd-jwt, meta: {vct_values: [urn:eudi:pid:1]}}]\n",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "flow_language_invalid");
+}
+
+#[test]
 fn the_carrier_vocabulary_is_closed() {
     // `dc_api` parses (the step names its carrier, §7)...
     let definition = FlowDefinition::from_yaml(

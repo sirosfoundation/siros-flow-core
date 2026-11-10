@@ -1,8 +1,9 @@
 {
-  "company-sca": "7fcb98d3114b1fc06252b2b0ed4febd226409901096973cd606a1514d82d8833",
-  "ehic-pid-presentation": "b4d74a4b39a29fb9c59839706329c1b3b97e04c0824c0ec93f4dd4c59034c7b0",
-  "identity-bound-eucc": "6dab60b069e00dbe48e93597381a20ecad04d1fb87b6fae75d53380bba1cf584",
-  "payment-receipt": "15ea7c03292134e450bcf4b0e258ed12453f681ddfb622a1c0ed977fd4002b97",
-  "preauth-pid-issue": "eab7ce933623d61dea91bf380f6f7a5b74081dddbe91cc6f8b52f99507981f35",
-  "token-sourced-attestation": "3028644b30f0fdc7f9459b4652debe62c7f4488fdea0a32d3d521fba3371123d"
+  "company-sca": "9779557772c921f3140be053c2427d43eef7d672ad5b724842e863df64f18f0f",
+  "ehic-pid-presentation": "1603e600ebd6dc6fd9e5e4fbb8ca77fa4978b69274e16a1ff72807c086d20480",
+  "ehic-pid-presentation-plain": "479fb854b04de2e535f19041046e4a5b79019fc5cac5c18ffb836ab5f9ff2a88",
+  "identity-bound-eucc": "12af0834aee31225d50012c51b5e32603c28a421d81decab0dd42c1aea1084b3",
+  "payment-receipt": "7419840774339b702e1e1ee97ee4343694e4f057d15ff34643a525af663b9e76",
+  "preauth-pid-issue": "d8252c7d2fa7008dabd30aaf46d88d736c1fc058fc5104847b6667e7c53a7c22",
+  "token-sourced-attestation": "5617404cf2bd35ef6708bcdbcf4efee8ba8d723ff22fc76669678f7a7cc41fe7"
 }

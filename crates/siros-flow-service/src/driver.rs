@@ -119,7 +119,7 @@ pub async fn resume_flow(
     state: &FlowServiceState,
     definition: &FlowDefinition,
     claimed: &FlowRecord,
-    jwe: &str,
+    response: crate::presentation::PresentationResponse,
 ) -> Result<WalkOutcome> {
     // The store key + the vault's AAD: the INSTANCE id (the definition
     // name rides instance.flow).
@@ -154,7 +154,7 @@ pub async fn resume_flow(
     // Verify (verifier-core) → TRUST (the PDP, fail-closed, per
     // credential) → adopt. A credential the PDP refuses is never
     // adopted (§9).
-    let verified = verify_presentation(state, &flow_instance, &armed.sealed_step, jwe)?;
+    let verified = verify_presentation(state, &flow_instance, &armed.sealed_step, &response)?;
     let mut result = PresentationResult::default();
     for (query_id, outcome) in verified {
         if let Err(e) = state.pdp.permit_presentation(&outcome.trust_query).await {
