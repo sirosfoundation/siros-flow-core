@@ -329,6 +329,12 @@ steps:
 > `pseudonym-equals` replaces the names plugin in this flow and the
 > engine does not change.
 >
+> **Owner decision (2026-11-11): a company SCA is just an SCA.** No
+> special "company SCA" credential type is registered anywhere — the
+> flow's issuance targets whatever SCA type a deployment's registry
+> carries; `urn:ewb:sca:1` remains the local fixture shape and no
+> registry registration is owed.
+
 > **Landed (P-bw2).** `flows/company-sca.yaml` is this resolution,
 > fixture-backed end-to-end (`company_sca_e2e.rs`): ONE transaction,
 > TWO DCQL queries (PID + PoA) in one `vp_token`, the two
@@ -1052,9 +1058,14 @@ Carried up from issuer-core, unchanged in spirit:
   shipped ehic-pid-presentation-plain twin gave the drill a vehicle
   the CURRENT pair completes — the drill is GREEN end-to-end: the
   real wallet's Share → the engine's clear-form POST → the live PDP
-  PERMIT → the EHIC → the completed flow. The .jwt twin becomes the
-  drill's vehicle again once the frontend branch lands and gdc's
-  frontend re-pins.
+  PERMIT → the EHIC → the completed flow. The .jwt twin became the
+  drill's vehicle the next day (2026-11-11): gdc's frontend re-pinned
+  to the client-held-response-encryption branch build
+  (sirosid-rc-encryption.1, published through the wallet-frontend
+  repo's own workflow), and the .jwt drill ran GREEN end-to-end — the
+  frontend encrypts (response_jwe), the engine relays, the live PDP
+  permits, the EHIC completes. BOTH response modes are now
+  drill-proven with the real wallet.
 - **The plain direct_post mode (2026-11-10, owner-approved):**
   OID4VP's unencrypted response mode, as a per-step opt-in with the
   encrypted mode the default — verifier-core's
