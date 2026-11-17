@@ -198,6 +198,8 @@ async fn spawn_issuer(
         dpop: Arc::new(siros_issuer_service::dpop::DpopValidator::new(60)),
         last_public_nonce: Arc::new(Mutex::new(String::new())),
         login_url: None,
+        pre_authorized_client_auth: siros_issuer_service::config::PreAuthorizedClientAuth::Required,
+        refresh_token: None,
         clients: Arc::new(flow_integrator_registry(integrator_public)),
         scopes: HashMap::new(),
         endpoint_paths: siros_issuer_core::oid4vci::EndpointPaths::default(),

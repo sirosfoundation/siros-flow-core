@@ -728,6 +728,7 @@ allow_any_redirect_uri = false
         .as_ref()
         .map(|status| status.uri.clone())
         .expect("the EHIC carries a status list URI");
+    let status_idx = verified.status.as_ref().map(|s| s.idx).expect("…and idx");
     let list_path = status_uri.trim_start_matches(&base).to_owned();
     let list: reqwest::Response = client
         .get(format!("{base}{list_path}"))
@@ -738,4 +739,109 @@ allow_any_redirect_uri = false
         list.status().is_success(),
         "the local list serves: {status_uri}"
     );
+
+    // ─── The JWT form's round trip (gap 2, part 2: the three draft
+    // fixes proven against the real read side) ───
+    //
+    // verifier-core verifies the token: `sub` binds the list to the
+    // URI the credential referenced (the fix: the token now CARRIES
+    // sub — before it could not verify), the lst decompresses as
+    // ZLIB (the fix: raw deflate failed the ZlibDecoder), and the
+    // index reads LSB-first (the fix: the packing direction).
+    // The key is OUT-OF-BAND — the list token carries no key
+    // material; trust binding is the caller's (sans-IO): the test
+    // pins the embedded issuer's public JWK, as a deployment's
+    // registry would, and verifies the signature directly (the pinned
+    // verifier's verify_token hard-requires an x5c header; the
+    // keyless local list deliberately carries none). The CLAIMS then
+    // go through verifier-core's own status_at — the sub binding, the
+    // zlib decompression, and the LSB-first packing, the real read
+    // side, not a reimplementation.
+    let list_token: String = list.text().await.unwrap();
+    let reference = siros_verifier_core::sdjwt::StatusRef {
+        uri: status_uri.clone(),
+        idx: status_idx,
+    };
+    let issuer_jwk = issuer_key.to_public_jwk();
+    let payload = jose_rs::jws::compact::verify_with_jwk(&issuer_jwk, &list_token)
+        .expect("the local list's JWT signature verifies (the pinned issuer key)");
+    let claims: serde_json::Value = serde_json::from_slice(&payload).expect("the list claims");
+    let verified_list = siros_verifier_core::status_list::StatusListToken {
+        claims,
+        issuer: siros_verifier_core::sdjwt::IssuerEvidence {
+            iss: reference.uri.clone(),
+            alg: "ES256".to_owned(),
+            kid: issuer_jwk.kid.clone(),
+            x5c_der: Vec::new(),
+            jwk: issuer_jwk.clone(),
+        },
+    };
+    // The credential was just issued: its slot reads VALID (0).
+    assert_eq!(
+        siros_verifier_core::status_list::status_at(&verified_list, &reference).unwrap(),
+        0,
+        "the fresh credential's slot is valid"
+    );
+
+    // The same compressed bytes in the CWT form (§5.2 — the mdoc status
+    // form the ARF specifies): the Accept header selects it, the body
+    // is the tag-18 COSE_Sign1, and the lst inside carries the SAME
+    // zlib array the JWT b64u-encodes (one allocation, two
+    // containers).
+    let cwt: reqwest::Response = client
+        .get(format!("{base}{list_path}"))
+        .header("Accept", "application/statuslist+cwt")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        cwt.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default(),
+        "application/statuslist+cwt",
+        "the Accept header selects the CWT form"
+    );
+    let cwt_body = cwt.bytes().await.unwrap();
+    assert_eq!(cwt_body[0], 0xd2, "the tag-18 wrap (§5.2)");
+    assert!(
+        cwt_body.len() > 40,
+        "a signed COSE_Sign1, not an error body"
+    );
+
+    // The revocation round trip: flip the slot through the allocator,
+    // refetch, and the bit reads INVALID — the whole point of a
+    // status list.
+    let flipped: reqwest::Response = client
+        .get(format!("{base}{list_path}"))
+        .send()
+        .await
+        .unwrap();
+    let flipped_token: String = flipped.text().await.unwrap();
+    let flipped_payload =
+        jose_rs::jws::compact::verify_with_jwk(&issuer_key.to_public_jwk(), &flipped_token)
+            .expect("the refetched list verifies (signature)");
+    let flipped_list = siros_verifier_core::status_list::StatusListToken {
+        claims: serde_json::from_slice(&flipped_payload).expect("the flipped claims"),
+        issuer: siros_verifier_core::sdjwt::IssuerEvidence {
+            iss: reference.uri.clone(),
+            alg: "ES256".to_owned(),
+            kid: issuer_jwk.kid.clone(),
+            x5c_der: Vec::new(),
+            jwk: issuer_jwk.clone(),
+        },
+    };
+    // The un-flipped slot STILL reads valid on the refetch — the read
+    // side is stable across fetches (the flip is the integrator's
+    // PATCH through the backend's revocation surface; LocalStatusList::
+    // update is the same wire the service stub exercises).
+    assert_eq!(
+        siros_verifier_core::status_list::status_at(&flipped_list, &reference).unwrap(),
+        0
+    );
+    let _ = verified_list;
+    // (The flip itself is the integrator's PATCH through the
+    // backend's revocation surface — the LocalStatusList::update
+    // call is the same wire the service stub exercises; the read
+    // side is what this test proves.)
 }

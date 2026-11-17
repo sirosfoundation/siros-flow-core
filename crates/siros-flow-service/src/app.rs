@@ -150,10 +150,10 @@ pub async fn build(config: &Config) -> Result<App> {
                 format!("/lists/{}", list.id).as_str(),
                 axum::routing::get({
                     let list = list.clone();
-                    move || {
+                    move |headers: axum::http::HeaderMap| {
                         let list = list.clone();
                         let signer = signer.clone();
-                        async move { crate::local_status::serve_list(list, signer).await }
+                        async move { crate::local_status::serve_list(list, signer, headers).await }
                     }
                 }),
             );
@@ -459,6 +459,12 @@ async fn build_embedded_issuer(
         )),
         wallet_attestation: None,
         pre_auth_binding: None,
+        // The postures from issuer-core's b50b510 line: the conformance
+        // default (client auth required on the pre-authorized grant) and
+        // the refresh_token grant OFF — the flow service's embedded
+        // issuer speaks exactly what it spoke before the pin bump.
+        pre_authorized_client_auth: siros_issuer_service::config::PreAuthorizedClientAuth::Required,
+        refresh_token: None,
         signer: issuer_signer,
         vault: Arc::new(
             siros_issuer_service::vault::Vault::new()

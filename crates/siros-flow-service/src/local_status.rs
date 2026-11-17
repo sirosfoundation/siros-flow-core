@@ -56,45 +56,96 @@ impl LocalStatusList {
             .bytes
             .lock()
             .map_err(|_| Error::configuration("the status list lock is poisoned"))?;
+        // draft-ietf-oauth-status-list -21 §4.1: each index's block of
+        // bits is packed into bytes from the LEAST significant bit to
+        // the most significant — the shift is the bit position within
+        // the byte, counted from bit 0 (the old MSB-first packing read
+        // wrong under every draft-conformant consumer, verifier-core's
+        // status_at included).
         let offset = (index * BITS_PER_INDEX) as usize;
         let byte = &mut bytes[offset / 8];
-        let shift = 8 - BITS_PER_INDEX as usize - (offset % 8);
+        let shift = offset % 8;
         let mask: u8 = ((1 << BITS_PER_INDEX) - 1) as u8;
         *byte = (*byte & !(mask << shift)) | (value << shift);
         Ok(())
     }
 
-    /// The Status List Token (the draft's shape): a JWT signed by the
-    /// embedded issuer, carrying the compressed bitstring.
-    pub fn token(&self, signer: &dyn siros_issuer_core::signer::Signer, now: i64) -> Result<Value> {
+    /// The list's §4.1 compressed byte array: DEFLATE **in the ZLIB
+    /// format** (RFC 1950 — the draft's own vectors are 78da-prefixed;
+    /// verifier-core's ZlibDecoder expects exactly this). The ONE
+    /// compressed array feeds both containers: the JWT form
+    /// base64url-encodes it, the CWT form carries it raw.
+    fn lst_compressed(&self) -> Result<Vec<u8>> {
         let bytes = self
             .bytes
             .lock()
             .map_err(|_| Error::configuration("the status list lock is poisoned"))?
             .clone();
         let mut encoder =
-            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         std::io::Write::write_all(&mut encoder, &bytes)
             .map_err(|e| Error::configuration(format!("the status list: {e}")))?;
-        let compressed = encoder
+        encoder
             .finish()
-            .map_err(|e| Error::configuration(format!("the status list: {e}")))?;
-        // The draft: cut the trailing partial byte when the bitstring
-        // length is not byte-aligned — 8192 bits is, so no rounding.
+            .map_err(|e| Error::configuration(format!("the status list: {e}")))
+    }
+
+    /// The list's own URI (the §5.1 `sub` — REQUIRED, and the value the
+    /// Referenced Tokens' status uri carries).
+    fn list_uri(&self) -> Result<url::Url> {
+        self.public_url
+            .join(&format!("lists/{}", self.id))
+            .map_err(|e| Error::configuration(format!("the list url: {e}")))
+    }
+
+    /// The Status List Token (§5.1): a JWT signed by the embedded
+    /// issuer. `sub` is REQUIRED (§5.1) — the list's own URI, the value
+    /// every credential's status uri carries and what a conformant
+    /// verifier (verifier-core's verify_token) binds the list to; the
+    /// old token had none, so it was unverifiable by our own read side.
+    pub fn token(&self, signer: &dyn siros_issuer_core::signer::Signer, now: i64) -> Result<Value> {
+        let compressed = self.lst_compressed()?;
         let lst = siros_issuer_core::sdjwt_issue::b64u(&compressed);
         let mut header = jose_rs::JoseHeader::new("ES256");
         header.typ = Some("statuslist+jwt".to_owned());
         header.kid = signer.public_jwk()?.kid.clone();
         let payload = serde_json::to_vec(&json!({
             "iss": siros_issuer_core::oid4vci::issuer_identifier(&self.public_url),
+            "sub": self.list_uri()?.as_str(),
             "iat": now,
             "status_list": { "bits": BITS_PER_INDEX, "lst": lst },
         }))
         .map_err(|e| Error::invalid_input(e.to_string()))?;
         Ok(json!({
-            "list_url": self.public_url.join(&format!("lists/{}", self.id)).ok().map(|u| u.as_str().to_owned()),
+            "list_url": self.list_uri().ok().map(|u| u.as_str().to_owned()),
             "token": signer.sign_es256(&header, &payload)?,
         }))
+    }
+
+    /// The Status List Token in CWT form (§5.2 — gap 2): the same
+    /// compressed array (raw bytes, never base64 in CBOR), the same
+    /// key, the same `sub` — the mdoc status form the ARF specifies.
+    pub fn token_cwt(
+        &self,
+        signer: &dyn siros_issuer_core::signer::Signer,
+        now: i64,
+    ) -> Result<Vec<u8>> {
+        siros_issuer_core::status_cwt::status_list_cwt(
+            signer,
+            &siros_issuer_core::status_cwt::StatusListCwt {
+                subject: self.list_uri()?.as_str(),
+                issuer: Some(
+                    siros_issuer_core::oid4vci::issuer_identifier(&self.public_url).as_str(),
+                ),
+                iat: now,
+                exp: None,
+                ttl: None,
+                lst_compressed: &self.lst_compressed()?,
+                bits: BITS_PER_INDEX,
+                aggregation_uri: None,
+                kid: signer.public_jwk()?.kid.as_deref(),
+            },
+        )
     }
 }
 
@@ -164,27 +215,41 @@ impl siros_issuer_service::status::StatusAllocator for LocalStatusList {
 pub async fn serve_list(
     list: std::sync::Arc<LocalStatusList>,
     signer: Arc<dyn siros_issuer_core::signer::Signer>,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
-    {
-        let now = siros_issuer_service::status::now_unix();
-        match list.token(signer.as_ref(), now) {
-            Ok(token) => {
-                // The token is a JWS (compact); the body carries the
-                // signed form.
-                let body = token["token"].as_str().unwrap_or_default().to_owned();
-                axum::response::Response::builder()
-                    .status(axum::http::StatusCode::OK)
-                    .header(
-                        axum::http::header::CONTENT_TYPE,
-                        "application/statuslist+jwt",
-                    )
-                    .body(axum::body::Body::from(body))
-                    .expect("static response parts")
-            }
-            Err(_) => axum::response::Response::builder()
-                .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::empty())
-                .expect("static response parts"),
-        }
+    // Content negotiation (vc's serving contract, draft §5.1/§5.2): the
+    // CWT form — the mdoc status form the ARF specifies — when the
+    // consumer asks for it; the JWT form (the default) otherwise. The
+    // same allocation, the same compressed bytes, the same key.
+    let wants_cwt = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|accept| {
+            accept
+                .split(',')
+                .map(str::trim)
+                .any(|media| media.starts_with(siros_issuer_core::status_cwt::MEDIA_TYPE_CWT))
+        })
+        .unwrap_or(false);
+    let now = siros_issuer_service::status::now_unix();
+    let built = if wants_cwt {
+        list.token_cwt(signer.as_ref(), now)
+            .map(|bytes| (siros_issuer_core::status_cwt::MEDIA_TYPE_CWT, bytes))
+    } else {
+        list.token(signer.as_ref(), now).map(|token| {
+            let body = token["token"].as_str().unwrap_or_default().to_owned();
+            ("application/statuslist+jwt", body.into_bytes())
+        })
+    };
+    match built {
+        Ok((content_type, body)) => axum::response::Response::builder()
+            .status(axum::http::StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE, content_type)
+            .body(axum::body::Body::from(body))
+            .expect("static response parts"),
+        Err(_) => axum::response::Response::builder()
+            .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::empty())
+            .expect("static response parts"),
     }
 }
