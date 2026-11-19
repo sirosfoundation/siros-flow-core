@@ -475,6 +475,13 @@ async fn build_embedded_issuer(
         // deployment whose wallets speak encryption flips this. The
         // to_wallet floor holds EITHER way, endpoint-enforced.
         response_encryption_required: false,
+        // The ARF disclosure policies (issuer-core's gap 3): ABSENT —
+        // the embedded issuer's credentials speak the conformance
+        // closed set; a flow deployment wanting per-credential policy
+        // tables (CIR 2024/2979 Annex III; ETSI TS 119 472-3 §4.2.5)
+        // gets them when the flow config grows an issuer-policy
+        // passthrough. Absent by default is the issuer's own posture.
+        disclosure_policies: BTreeMap::new(),
         signer: issuer_signer,
         vault: Arc::new(
             siros_issuer_service::vault::Vault::new()
