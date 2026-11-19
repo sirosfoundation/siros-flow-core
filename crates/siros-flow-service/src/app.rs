@@ -445,7 +445,10 @@ async fn build_embedded_issuer(
         refresh: Arc::new(siros_issuer_service::api::RefreshStatus::default()),
         sessions: Arc::new(siros_issuer_service::store::MemoryStore::new()),
         dpop: Arc::new(siros_issuer_service::dpop::DpopValidator::new(60)),
-        last_public_nonce: Arc::new(Mutex::new(String::new())),
+        // The nonce ring (issuer-core's #3): the embedded issuer holds a
+        // window of live public nonces, not one slot.
+        public_nonces: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+        public_nonce_slots: 8,
         login_url: None,
         clients: Arc::new(clients),
         scopes: config.authorization.scopes.clone(),
@@ -465,6 +468,13 @@ async fn build_embedded_issuer(
         // issuer speaks exactly what it spoke before the pin bump.
         pre_authorized_client_auth: siros_issuer_service::config::PreAuthorizedClientAuth::Required,
         refresh_token: None,
+        // The step-back review's #8 — the DELIBERATE visible decision:
+        // the embedded issuer opts OUT of required response encryption
+        // (the v0.2 default is TRUE — "as much as possible" — and the
+        // gdc plain-mode wallets would be refused by it). A flow
+        // deployment whose wallets speak encryption flips this. The
+        // to_wallet floor holds EITHER way, endpoint-enforced.
+        response_encryption_required: false,
         signer: issuer_signer,
         vault: Arc::new(
             siros_issuer_service::vault::Vault::new()
