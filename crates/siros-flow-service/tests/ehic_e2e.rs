@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use url::Url;
@@ -37,6 +37,9 @@ use siros_flow_core::bind::BindRegistry;
 use siros_flow_service::state::FlowServiceState;
 use siros_flow_service::store::MemoryFlowStore;
 use siros_flow_service::IssuerCoreClient;
+// ONE copy of the pin-line postures (the duplication gate).
+#[path = "common/mod.rs"]
+mod common;
 
 const ISSUER_BASE: &str = "http://127.0.0.1:8080";
 
@@ -45,6 +48,7 @@ const ISSUER_BASE: &str = "http://127.0.0.1:8080";
 struct PermitPdp;
 
 #[async_trait::async_trait]
+
 impl siros_issuer_service::pdp::TrustPdp for PermitPdp {
     async fn permit(
         &self,
@@ -199,6 +203,8 @@ async fn spawn_issuer(
         list_url: Url::parse("http://127.0.0.1:9/lists/test-list").unwrap(),
         next_index: AtomicU64::new(3),
     });
+    let (public_nonces, public_nonce_slots, response_encryption_required) =
+        common::embedded_postures();
     let state = siros_issuer_service::api::AppState {
         catalog: Arc::new(std::sync::RwLock::new(Arc::new(catalog))),
         issuer_base: Url::parse(ISSUER_BASE).unwrap(),
@@ -206,10 +212,12 @@ async fn spawn_issuer(
         refresh: Arc::new(siros_issuer_service::api::RefreshStatus::default()),
         sessions: Arc::new(siros_issuer_service::store::MemoryStore::new()),
         dpop: Arc::new(siros_issuer_service::dpop::DpopValidator::new(60)),
-        last_public_nonce: Arc::new(Mutex::new(String::new())),
+        public_nonces,
+        public_nonce_slots,
         login_url: None,
         pre_authorized_client_auth: siros_issuer_service::config::PreAuthorizedClientAuth::Required,
         refresh_token: None,
+        response_encryption_required,
         clients: Arc::new(flow_integrator_registry(integrator_public)),
         scopes: HashMap::new(),
         endpoint_paths: siros_issuer_core::oid4vci::EndpointPaths::default(),

@@ -29,8 +29,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 url = "2"
 toml = "0.8"
 tracing = "0.1"
-siros-issuer-core = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "b50b5105efbce5e24906301453c1141819497109" }
-siros-issuer-service = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "b50b5105efbce5e24906301453c1141819497109" }
+siros-issuer-core = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "e27b2955c7702c4af57787339eace6ef78eb4af5" }
+siros-issuer-service = { git = "https://github.com/sirosfoundation/siros-issuer-core", rev = "e27b2955c7702c4af57787339eace6ef78eb4af5" }
 siros-verifier-core = { git = "https://github.com/sirosfoundation/siros-verifier-core", rev = "dfe710e81320a0464a9c8267c326bb0809020be6" }
 
 [profile.release]
