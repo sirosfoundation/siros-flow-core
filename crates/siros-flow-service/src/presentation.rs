@@ -133,6 +133,11 @@ pub fn arm_presentation(
         ttl_secs: state.presentation_ttl_seconds,
         vp_formats_supported: None,
         client_id: None,
+        // The EAAP registrar members (ETSI TS 119 472-2): unconfigured —
+        // the pre-EAAP request shape; a flow definition gains registrar
+        // data when the profile asks for it.
+        verifier_info: None,
+        wrprc: None,
     };
     // The carrier decides how the request reaches the wallet (§7) and
     // the response mode how the answer comes back (§6.1): the

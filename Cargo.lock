@@ -2884,7 +2884,7 @@ dependencies = [
 [[package]]
 name = "siros-issuer-core"
 version = "0.2.0"
-source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=e27b2955c7702c4af57787339eace6ef78eb4af5#e27b2955c7702c4af57787339eace6ef78eb4af5"
+source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=f765170f05eb0d018f877186b7f6141a708bd45d#f765170f05eb0d018f877186b7f6141a708bd45d"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2904,7 +2904,7 @@ dependencies = [
 [[package]]
 name = "siros-issuer-service"
 version = "0.1.0"
-source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=e27b2955c7702c4af57787339eace6ef78eb4af5#e27b2955c7702c4af57787339eace6ef78eb4af5"
+source = "git+https://github.com/sirosfoundation/siros-issuer-core?rev=f765170f05eb0d018f877186b7f6141a708bd45d#f765170f05eb0d018f877186b7f6141a708bd45d"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -2934,8 +2934,8 @@ dependencies = [
 
 [[package]]
 name = "siros-verifier-core"
-version = "0.1.0"
-source = "git+https://github.com/sirosfoundation/siros-verifier-core?rev=dfe710e81320a0464a9c8267c326bb0809020be6#dfe710e81320a0464a9c8267c326bb0809020be6"
+version = "0.1.7"
+source = "git+https://github.com/sirosfoundation/siros-verifier-core?rev=0f128b8afb776033f1bb3eb9dcd8d0e0e26faef2#0f128b8afb776033f1bb3eb9dcd8d0e0e26faef2"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
