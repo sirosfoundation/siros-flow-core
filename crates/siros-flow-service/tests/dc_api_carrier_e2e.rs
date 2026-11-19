@@ -99,8 +99,16 @@ async fn spawn_flow(definitions_dir: &str) -> String {
         "http://127.0.0.1:9".to_owned(),
         "https://flow.example.org/".to_owned(),
         {
-            let path =
-                std::env::temp_dir().join(format!("dc-api-integrator-{}.jwk", std::process::id()));
+            // UNIQUE per spawn: the file name is NOT keyed by pid alone —
+            // both carrier tests share this process and Rust runs them on
+            // PARALLEL threads; a shared name raced (one spawn's truncate
+            // mid-write, the other's reader parsing an empty file: "EOF
+            // while parsing a value at line 1 column 0"). A monotonic
+            // counter names each spawn's key its own file.
+            static SPAWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = SPAWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let path = std::env::temp_dir()
+                .join(format!("dc-api-integrator-{}-{n}.jwk", std::process::id()));
             let key = jose_rs::jwk::generate_ec("P-256").unwrap();
             std::fs::write(&path, serde_json::to_string(&key).unwrap()).unwrap();
             path.display().to_string()
