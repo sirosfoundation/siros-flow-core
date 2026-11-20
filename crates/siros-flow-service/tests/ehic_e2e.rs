@@ -218,6 +218,7 @@ async fn spawn_issuer(
         pre_authorized_client_auth: siros_issuer_service::config::PreAuthorizedClientAuth::Required,
         refresh_token: None,
         response_encryption_required,
+        emit_credential_metadata_on_response: false,
         disclosure_policies: Default::default(),
         clients: Arc::new(flow_integrator_registry(integrator_public)),
         scopes: HashMap::new(),
