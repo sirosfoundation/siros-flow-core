@@ -475,6 +475,13 @@ async fn build_embedded_issuer(
         // deployment whose wallets speak encryption flips this. The
         // to_wallet floor holds EITHER way, endpoint-enforced.
         response_encryption_required: false,
+        // Issue #41 (issuer-core's response display members): OFF for
+        // the embedded issuer — the flow deployments' responses keep
+        // the closed member set until their catalog documents carry
+        // display content and a deployment opts in. The knob only ever
+        // ADDS members around the auxiliary-data carrier; it never
+        // gates the openings.
+        emit_credential_metadata_on_response: false,
         // The ARF disclosure policies (issuer-core's gap 3): ABSENT —
         // the embedded issuer's credentials speak the conformance
         // closed set; a flow deployment wanting per-credential policy
